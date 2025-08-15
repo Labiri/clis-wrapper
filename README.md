@@ -1,22 +1,35 @@
-# Claude Code OpenAI API Wrapper
+# Claude Code & Gemini OpenAI API Wrapper
 
-An OpenAI API-compatible wrapper for Claude Code, allowing you to use Claude Code with any OpenAI client library. **Now powered by the official Claude Code Python SDK** with enhanced authentication and features.
+An OpenAI API-compatible wrapper for **Claude Code** and **Google Gemini**, allowing you to use both AI models with any OpenAI client library. **Now with dual-provider support** - seamlessly switch between Claude and Gemini models using the same API.
 
 ## Status
 
 🎉 **Production Ready** - All core features working and tested:
+
+### Claude Code Support
 - ✅ Chat completions endpoint with **official Claude Code Python SDK**
-- ✅ Streaming and non-streaming responses  
-- ✅ Full OpenAI SDK compatibility
 - ✅ **Multi-provider authentication** (API key, Bedrock, Vertex AI, CLI auth)
 - ✅ **System prompt support** via SDK options
 - ✅ Dynamic model discovery with automatic updates
 - ✅ **Fast by default** - Tools disabled for OpenAI compatibility (5-10x faster)
 - ✅ Optional tool usage (Read, Write, Bash, etc.) when explicitly enabled
 - ✅ **Real-time cost and token tracking** from SDK
-- ✅ **Session continuity** with conversation history across requests 🆕
-- ✅ **Session management endpoints** for full session control 🆕
+- ✅ **Session continuity** with conversation history across requests
+- ✅ **Session management endpoints** for full session control
 - ✅ **Chat mode** for sandboxed, secure chat-only operation 🔒
+
+### 🆕 Gemini Support
+- ✅ **Native Gemini CLI integration** - Uses Gemini CLI directly
+- ✅ **Automatic model routing** - Use `gemini-*` models seamlessly  
+- ✅ **CLI-based streaming** - Direct streaming from Gemini CLI
+- ✅ **No API key required** - Uses CLI authentication
+- ✅ **Sandbox mode** - Optional sandboxed execution
+- ✅ **YOLO mode** - Auto-accept actions when enabled
+- ✅ **Multiple models** - Support for all Gemini models
+
+### Shared Features
+- ✅ Streaming and non-streaming responses  
+- ✅ Full OpenAI SDK compatibility
 - ✅ Health, auth status, and models endpoints
 - ✅ **Development mode** with auto-reload
 
@@ -28,12 +41,13 @@ An OpenAI API-compatible wrapper for Claude Code, allowing you to use Claude Cod
 - Compatible with OpenAI Python SDK and all OpenAI client libraries
 - Automatic model discovery and validation
 
-### 🛠 **Claude Code SDK Integration**
-- **Official Claude Code Python SDK** integration (v0.0.14)
-- **Real-time cost tracking** - actual costs from SDK metadata
-- **Accurate token counting** - input/output tokens from SDK
-- **Session management** - proper session IDs and continuity
+### 🛠 **CLI Integration**
+- **Claude Code Python SDK** integration for Claude models
+- **Gemini CLI** integration for Google models
+- **Real-time cost tracking** - actual costs from SDK metadata (Claude)
+- **Session management** - proper session IDs and continuity (Claude)
 - **Enhanced error handling** with detailed authentication diagnostics
+- **No API keys required** - Both use CLI authentication
 
 ### 🔐 **Multi-Provider Authentication**
 - **Automatic detection** of authentication method
@@ -56,6 +70,8 @@ An OpenAI API-compatible wrapper for Claude Code, allowing you to use Claude Cod
 
 Get started in under 2 minutes:
 
+### Setup for Claude Code
+
 ```bash
 # 1. Install Claude Code CLI (if not already installed)
 npm install -g @anthropic-ai/claude-code
@@ -63,16 +79,30 @@ npm install -g @anthropic-ai/claude-code
 # 2. Authenticate (choose one method)
 claude auth login  # Recommended for development
 # OR set: export ANTHROPIC_API_KEY=your-api-key
+```
 
-# 3. Clone and setup the wrapper
+### Setup for Gemini
+
+```bash
+# 1. Install Gemini CLI
+npm install -g @google/gemini-cli
+
+# 2. Authenticate with Google account
+gemini auth login
+```
+
+### Install and Run
+
+```bash
+# 1. Clone and setup the wrapper
 git clone https://github.com/RichardAtCT/claude-code-openai-wrapper
 cd claude-code-openai-wrapper
 poetry install
 
-# 4. Start the server
+# 2. Start the server
 poetry run uvicorn main:app --reload --port 8000
 
-# 5. Test it works
+# 3. Test it works
 poetry run python test_endpoints.py
 ```
 
@@ -125,6 +155,31 @@ poetry run python test_endpoints.py
    cp .env.example .env
    # Edit .env with your preferences
    ```
+
+## Model Selection
+
+The wrapper automatically routes requests based on the model name:
+
+### Claude Models (prefix: `claude-*`)
+- `claude-3-5-sonnet-20241022` - Latest Sonnet model
+- `claude-3-5-haiku-20241022` - Fast, efficient model
+- `claude-opus-4-1-20250805` - Most capable model
+- And all other Claude models available in your CLI
+
+### Gemini Models (prefix: `gemini-*`)
+- `gemini-1.5-flash` - Fast, efficient model
+- `gemini-1.5-pro` - Balanced performance
+- `gemini-1.0-pro` - Stable production model
+- `gemini-2.0-flash-exp` - Experimental features
+
+### Chat Mode Suffixes
+Both Claude and Gemini models support chat mode suffixes:
+- `-chat` - Enable chat mode (no progress markers)
+- `-chat-progress` - Enable chat mode with progress indicators
+
+Examples:
+- `claude-3-5-sonnet-20241022-chat`
+- `gemini-1.5-flash-chat-progress`
 
 ## Configuration
 
@@ -587,11 +642,21 @@ Report issues on GitHub with logs/image tag/OS details.
 ### Using curl
 
 ```bash
-# Basic chat completion (no auth)
+# Claude model
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-3-5-sonnet-20241022",
+    "messages": [
+      {"role": "user", "content": "What is 2 + 2?"}
+    ]
+  }'
+
+# Gemini model
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-1.5-flash",
     "messages": [
       {"role": "user", "content": "What is 2 + 2?"}
     ]
@@ -624,12 +689,23 @@ client = OpenAI(
 # Alternative: Let examples auto-detect authentication
 # The wrapper's example files automatically check server auth status
 
-# Basic chat completion
+# Using Claude model
 response = client.chat.completions.create(
     model="claude-3-5-sonnet-20241022",
     messages=[
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "What files are in the current directory?"}
+    ]
+)
+
+print(response.choices[0].message.content)
+
+# Using Gemini model
+response = client.chat.completions.create(
+    model="gemini-1.5-flash",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Explain quantum computing in simple terms."}
     ]
 )
 

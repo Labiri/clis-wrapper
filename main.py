@@ -30,7 +30,9 @@ from models import (
     SessionListResponse
 )
 from claude_cli import ClaudeCodeCLI
+from gemini_cli import GeminiCLI
 from message_adapter import MessageAdapter
+from gemini_message_adapter import GeminiMessageAdapter
 from auth import verify_api_key, security, validate_claude_code_auth, get_claude_code_auth_info
 from parameter_validator import ParameterValidator, CompatibilityReporter
 from session_manager import session_manager
@@ -79,6 +81,21 @@ def create_error_response(error: Exception, context: str) -> Dict[str, Any]:
             "context": context
         }
     }
+
+def get_model_provider(model_name: str) -> str:
+    """Determine which provider to use based on model name."""
+    base_model = model_name.lower()
+    
+    # Remove chat mode suffixes if present
+    base_model = base_model.replace("-chat-progress", "").replace("-chat", "")
+    
+    if base_model.startswith("gemini") or base_model.startswith("models/gemini"):
+        return "gemini"
+    elif base_model.startswith("claude"):
+        return "claude"
+    else:
+        # Default to Claude for backward compatibility
+        return "claude"
 
 def generate_secure_token(length: int = 32) -> str:
     """Generate a secure random token for API authentication."""
@@ -135,6 +152,12 @@ def prompt_for_api_protection() -> Optional[str]:
 claude_cli = ClaudeCodeCLI(
     timeout=int(os.getenv("MAX_TIMEOUT", "600000")),
     cwd=os.getenv("CLAUDE_CWD")
+)
+
+# Initialize Gemini CLI
+gemini_cli = GeminiCLI(
+    timeout=int(os.getenv("MAX_TIMEOUT", "600000")),
+    cwd=os.getenv("GEMINI_CWD", os.getenv("CLAUDE_CWD"))
 )
 
 
@@ -1366,6 +1389,48 @@ async def stream_with_progress_injection(
         logger.debug("Progress injection: Monitoring stopped")
 
 
+async def generate_gemini_streaming_response(
+    request: ChatCompletionRequest,
+    request_id: str
+) -> AsyncGenerator[str, None]:
+    """Generate streaming response from Gemini."""
+    try:
+        # Convert messages to list of dicts
+        messages = [msg.dict() for msg in request.messages]
+        
+        # Stream from Gemini
+        async for chunk in gemini_cli.stream_completion(
+            messages=messages,
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            tools=request.tools if hasattr(request, 'tools') else None
+        ):
+            # Format chunk for SSE
+            if chunk:
+                stream_chunk = GeminiMessageAdapter.prepare_streaming_chunk(chunk)
+                stream_chunk["id"] = request_id
+                stream_chunk["model"] = request.model
+                stream_chunk["object"] = "chat.completion.chunk"
+                
+                yield f"data: {json.dumps(stream_chunk)}\n\n"
+        
+        # Send final done message
+        yield "data: [DONE]\n\n"
+        
+    except Exception as e:
+        logger.error(f"Gemini streaming error: {e}")
+        error_chunk = {
+            "id": request_id,
+            "object": "chat.completion.chunk",
+            "error": {
+                "message": str(e),
+                "type": "streaming_error"
+            }
+        }
+        yield f"data: {json.dumps(error_chunk)}\n\n"
+        yield "data: [DONE]\n\n"
+
 async def generate_streaming_response(
     request: ChatCompletionRequest,
     request_id: str,
@@ -1651,20 +1716,29 @@ async def chat_completions(
     # Check FastAPI API key if configured
     await verify_api_key(request, credentials)
     
-    # Validate Claude Code authentication
-    auth_valid, auth_info = validate_claude_code_auth()
+    # Parse model to determine provider
+    base_model, _, _ = ModelUtils.parse_model_and_mode(request_body.model)
+    provider = get_model_provider(base_model)
     
-    if not auth_valid:
-        error_detail = {
-            "message": "Claude Code authentication failed",
-            "errors": auth_info.get('errors', []),
-            "method": auth_info.get('method', 'none'),
-            "help": "Check /v1/auth/status for detailed authentication information"
-        }
-        raise HTTPException(
-            status_code=503,
-            detail=error_detail
-        )
+    # Validate authentication based on provider
+    if provider == "claude":
+        auth_valid, auth_info = validate_claude_code_auth()
+        
+        if not auth_valid:
+            error_detail = {
+                "message": "Claude Code authentication failed",
+                "errors": auth_info.get('errors', []),
+                "method": auth_info.get('method', 'none'),
+                "help": "Check /v1/auth/status for detailed authentication information"
+            }
+            raise HTTPException(
+                status_code=503,
+                detail=error_detail
+            )
+    elif provider == "gemini":
+        # Gemini uses CLI authentication (gemini auth login)
+        # No API key required - it uses the authenticated CLI
+        logger.debug("Using Gemini CLI authentication")
     
     try:
         request_id = f"chatcmpl-{os.urandom(8).hex()}"
@@ -1675,13 +1749,60 @@ async def chat_completions(
         # Update request to use base model
         request_body.model = base_model
         
+        # Determine which provider to use
+        provider = get_model_provider(base_model)
+        
         # Log the mode
         if is_chat_mode:
             if show_progress_markers:
-                logger.info(f"Chat mode with progress markers activated via model suffix for {base_model}")
+                logger.info(f"Chat mode with progress markers activated via model suffix for {base_model} (provider: {provider})")
             else:
-                logger.info(f"Chat mode activated via model suffix for {base_model}")
+                logger.info(f"Chat mode activated via model suffix for {base_model} (provider: {provider})")
+        else:
+            logger.info(f"Using {provider} provider for model {base_model}")
         
+        # Handle Gemini models separately
+        if provider == "gemini":
+            if request_body.stream:
+                # Gemini streaming response
+                stream_generator = generate_gemini_streaming_response(request_body, request_id)
+                return StreamingResponse(
+                    stream_generator,
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                    }
+                )
+            else:
+                # Gemini non-streaming response
+                messages = [msg.dict() for msg in request_body.messages]
+                response = await gemini_cli.complete(
+                    messages=messages,
+                    model=base_model,
+                    temperature=request_body.temperature,
+                    max_tokens=request_body.max_tokens,
+                    tools=request_body.tools if hasattr(request_body, 'tools') else None
+                )
+                
+                # Format response for OpenAI compatibility
+                return ChatCompletionResponse(
+                    id=request_id,
+                    object="chat.completion",
+                    created=int(os.urandom(4).hex(), 16),
+                    model=request_body.model,
+                    choices=[Choice(
+                        index=0,
+                        message=Message(
+                            role=response.get('role', 'assistant'),
+                            content=response.get('content', '')
+                        ),
+                        finish_reason="stop"
+                    )],
+                    usage=Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                )
+        
+        # Continue with Claude processing
         # Extract Claude-specific parameters from headers
         claude_headers = ParameterValidator.extract_claude_headers(dict(request.headers))
         
@@ -1840,11 +1961,16 @@ async def list_models(
     # Check FastAPI API key if configured
     await verify_api_key(request, credentials)
     
-    # Get models dynamically
-    base_models = list(ParameterValidator.get_supported_models())
+    # Get Claude models dynamically
+    claude_models = list(ParameterValidator.get_supported_models())
+    
+    # Get Gemini models
+    gemini_models = await gemini_cli.list_models()
     
     models_data = []
-    for base_model in sorted(base_models):
+    
+    # Add Claude models
+    for base_model in sorted(claude_models):
         # Add base model (normal mode)
         models_data.append({
             "id": base_model,
@@ -1862,6 +1988,27 @@ async def list_models(
             "id": ModelUtils.create_chat_progress_variant(base_model),
             "object": "model",
             "owned_by": "anthropic"
+        })
+    
+    # Add Gemini models
+    for base_model in sorted(gemini_models):
+        # Add base model (normal mode)
+        models_data.append({
+            "id": base_model,
+            "object": "model",
+            "owned_by": "google"
+        })
+        # Add chat variant (without progress markers)
+        models_data.append({
+            "id": ModelUtils.create_chat_variant(base_model),
+            "object": "model",
+            "owned_by": "google"
+        })
+        # Add chat-progress variant (with progress markers)
+        models_data.append({
+            "id": ModelUtils.create_chat_progress_variant(base_model),
+            "object": "model",
+            "owned_by": "google"
         })
     
     return {
