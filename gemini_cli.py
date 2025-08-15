@@ -7,6 +7,11 @@ from pathlib import Path
 import logging
 import shlex
 
+# Import chat mode utilities
+from chat_mode import ChatMode
+from prompts import ChatModePrompts, FormatDetector
+from xml_detector import DeterministicXMLDetector
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +31,74 @@ class GeminiCLI:
         # Gemini CLI path
         self.gemini_path = os.getenv('GEMINI_CLI_PATH', 'gemini')
         
+        # Chat mode utilities
+        self.format_detector = FormatDetector()
+        self.prompts = ChatModePrompts()
+        self.xml_detector = DeterministicXMLDetector()
+        
         logger.info(f"Initialized Gemini CLI with model: {self.default_model}")
+    
+    def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, is_chat_mode: bool = False) -> str:
+        """Prepare prompt with system injections based on mode and format detection."""
+        if not is_chat_mode:
+            # In normal mode, return prompt as-is
+            return prompt
+            
+        logger.debug(f"Preparing Gemini prompt with injections, is_chat_mode={is_chat_mode}")
+        
+        prompt_parts = []
+        final_parts = []
+        
+        # Add response reinforcement and chat mode prompts
+        prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
+        prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
+        
+        # Add completeness instruction
+        prompt_parts.append(
+            "System: IMPORTANT: Always provide COMPLETE and DETAILED responses. "
+            "Do not truncate, abbreviate, or cut off your answers. "
+            "Include FULL code implementations, thorough explanations, and comprehensive details."
+        )
+        
+        # Check for XML format requirements
+        if messages:
+            xml_required, detection_reason, xml_tool_names = self.xml_detector.detect(prompt, messages)
+            
+            if xml_required:
+                logger.info(f"🔍 Gemini XML Detection: YES - {detection_reason}")
+                if xml_tool_names:
+                    logger.info(f"   Tools: {', '.join(xml_tool_names)}")
+                
+                # Add XML enforcement
+                xml_enforcement = (
+                    "\n\nCRITICAL - XML FORMAT REQUIRED:\n"
+                    "1. Your ENTIRE response MUST be formatted using XML tags\n"
+                    "2. Use formatting tags like: <attempt_completion>, <ask_followup_question>\n"
+                    "3. Start with an opening XML tag and end with the closing tag\n"
+                    "4. NO plain text outside the XML tags\n"
+                    "5. For general responses: <attempt_completion><result>...</result></attempt_completion>\n"
+                    "These are response formatting tags, NOT tool invocations."
+                )
+                final_parts.append(f"System: {xml_enforcement}")
+        
+        # Add user prompt
+        prompt_parts.append(f"User: {prompt}")
+        
+        # Detect other special formats
+        if messages:
+            has_tool_defs, has_json_req = self.format_detector.detect_special_formats(messages)
+            
+            final_reinforcement = self.prompts.get_final_reinforcement(has_tool_defs, has_json_req)
+            if final_reinforcement:
+                final_parts.append(f"System: {final_reinforcement}")
+        
+        # Combine all parts
+        full_prompt = "\n\n".join(prompt_parts)
+        if final_parts:
+            full_prompt += "\n\n" + "\n\n".join(final_parts)
+            
+        logger.debug(f"Enhanced Gemini prompt length: {len(full_prompt)} (original: {len(prompt)})")
+        return full_prompt
     
     async def verify_cli(self) -> bool:
         """Verify Gemini CLI is installed and working."""
@@ -83,24 +155,39 @@ class GeminiCLI:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        is_chat_mode: bool = False,
         **kwargs
     ) -> AsyncGenerator[str, None]:
         """Stream a completion from Gemini CLI."""
         try:
             model_name = model or self.default_model
             
+            # Set up chat mode if enabled
+            cwd = self.cwd
+            force_sandbox = self.enable_sandbox
+            
+            if is_chat_mode:
+                # Create sandbox directory for this request
+                sandbox_dir = ChatMode.create_sandbox()
+                cwd = Path(sandbox_dir)
+                force_sandbox = True  # Always use sandbox in chat mode
+                logger.info(f"Gemini chat mode: Using sandbox at {sandbox_dir}")
+            
             # Convert messages to a single prompt
             prompt = self._messages_to_prompt(messages)
+            
+            # Apply prompt injections if in chat mode
+            enhanced_prompt = self._prepare_prompt_with_injections(prompt, messages, is_chat_mode)
             
             # Build command
             cmd = [self.gemini_path]
             cmd.extend(['-m', model_name])
-            cmd.extend(['-p', prompt])
+            cmd.extend(['-p', enhanced_prompt])
             
-            if self.enable_sandbox:
+            if force_sandbox:
                 cmd.append('-s')
             
-            if self.yolo_mode:
+            if self.yolo_mode and not is_chat_mode:  # Disable YOLO in chat mode for safety
                 cmd.append('-y')
             
             logger.debug(f"Executing Gemini CLI: {' '.join(cmd[:4])}...")  # Log partial command
@@ -110,7 +197,7 @@ class GeminiCLI:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.cwd)
+                cwd=str(cwd)
             )
             
             # Stream output line by line
@@ -157,10 +244,25 @@ class GeminiCLI:
                 error_msg = stderr.decode('utf-8', errors='ignore')
                 logger.error(f"Gemini CLI error: {error_msg}")
                 yield f"\n[Error: {error_msg}]"
-                
+            
+            # Clean up sandbox if in chat mode
+            if is_chat_mode and 'sandbox_dir' in locals():
+                try:
+                    ChatMode.cleanup_sandbox(sandbox_dir)
+                    logger.debug(f"Cleaned up Gemini sandbox: {sandbox_dir}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup sandbox {sandbox_dir}: {cleanup_error}")
+                    
         except Exception as e:
             logger.error(f"Error in Gemini stream_completion: {e}")
             yield f"Error: {str(e)}"
+            
+            # Clean up sandbox on error if in chat mode
+            if is_chat_mode and 'sandbox_dir' in locals():
+                try:
+                    ChatMode.cleanup_sandbox(sandbox_dir)
+                except Exception:
+                    pass
     
     async def complete(
         self,
@@ -168,6 +270,7 @@ class GeminiCLI:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        is_chat_mode: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """Generate a non-streaming completion from Gemini CLI."""
@@ -179,6 +282,7 @@ class GeminiCLI:
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                is_chat_mode=is_chat_mode,
                 **kwargs
             ):
                 response_text += chunk

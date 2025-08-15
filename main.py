@@ -1391,7 +1391,8 @@ async def stream_with_progress_injection(
 
 async def generate_gemini_streaming_response(
     request: ChatCompletionRequest,
-    request_id: str
+    request_id: str,
+    is_chat_mode: bool = False
 ) -> AsyncGenerator[str, None]:
     """Generate streaming response from Gemini."""
     try:
@@ -1404,6 +1405,7 @@ async def generate_gemini_streaming_response(
             model=request.model,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
+            is_chat_mode=is_chat_mode,
             tools=request.tools if hasattr(request, 'tools') else None
         ):
             # Format chunk for SSE
@@ -1765,7 +1767,7 @@ async def chat_completions(
         if provider == "gemini":
             if request_body.stream:
                 # Gemini streaming response
-                stream_generator = generate_gemini_streaming_response(request_body, request_id)
+                stream_generator = generate_gemini_streaming_response(request_body, request_id, is_chat_mode)
                 return StreamingResponse(
                     stream_generator,
                     media_type="text/event-stream",
@@ -1782,6 +1784,7 @@ async def chat_completions(
                     model=base_model,
                     temperature=request_body.temperature,
                     max_tokens=request_body.max_tokens,
+                    is_chat_mode=is_chat_mode,
                     tools=request_body.tools if hasattr(request_body, 'tools') else None
                 )
                 
