@@ -2001,18 +2001,13 @@ async def list_models(
             "object": "model",
             "owned_by": "google"
         })
-        # Add chat variant (without progress markers)
+        # Add chat variant (Gemini already streams natively, no need for chat-progress)
         models_data.append({
             "id": ModelUtils.create_chat_variant(base_model),
             "object": "model",
             "owned_by": "google"
         })
-        # Add chat-progress variant (with progress markers)
-        models_data.append({
-            "id": ModelUtils.create_chat_progress_variant(base_model),
-            "object": "model",
-            "owned_by": "google"
-        })
+        # Note: No chat-progress variant for Gemini as it already streams natively
     
     return {
         "object": "list",
