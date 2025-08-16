@@ -6,9 +6,10 @@ from typing import AsyncGenerator, Dict, Any, Optional, List
 from pathlib import Path
 import logging
 import shlex
+import re
 
 # Import chat mode utilities
-from chat_mode import ChatMode
+from chat_mode import ChatMode, sanitized_environment
 from prompts import ChatModePrompts, FormatDetector
 from xml_detector import DeterministicXMLDetector
 
@@ -38,6 +39,78 @@ class GeminiCLI:
         
         logger.info(f"Initialized Gemini CLI with model: {self.default_model}")
     
+    def _filter_sensitive_paths(self, text: str, is_chat_mode: bool = False) -> str:
+        """Filter out sensitive path information from responses in chat mode."""
+        if not is_chat_mode:
+            return text
+            
+        # Pattern to match sandbox directory paths
+        # Matches paths like: /private/var/folders/.../claude_chat_sandbox_xxx
+        # or /tmp/claude_chat_sandbox_xxx
+        sandbox_patterns = [
+            r'/private/var/folders/[^/]+/[^/]+/[^/]+/claude_chat_sandbox_[a-zA-Z0-9_]+',
+            r'/tmp/claude_chat_sandbox_[a-zA-Z0-9_]+',
+            r'/var/folders/[^/]+/[^/]+/[^/]+/claude_chat_sandbox_[a-zA-Z0-9_]+',
+            r'claude_chat_sandbox_[a-zA-Z0-9_]+',
+            # Also match general temp directory patterns when they contain "claude_chat_sandbox"
+            r'[^\s]*claude_chat_sandbox[^\s]*'
+        ]
+        
+        filtered_text = text
+        path_found = False
+        
+        for pattern in sandbox_patterns:
+            if re.search(pattern, filtered_text, re.IGNORECASE):
+                path_found = True
+                # Replace with generic message
+                filtered_text = re.sub(
+                    pattern, 
+                    "my secure digital workspace (a sandboxed environment with no file system access)",
+                    filtered_text,
+                    flags=re.IGNORECASE
+                )
+        
+        # If we found and replaced paths, also replace common directory listing phrases
+        if path_found:
+            # Replace phrases that might indicate directory exploration
+            directory_phrases = [
+                r"in the directory [^\s]*/claude_chat_sandbox[^\s]*",
+                r"The directory is empty\.",
+                r"I will list the files in this directory\.",
+                r"To give you a current view, I will list the files",
+                r"listing the files in this directory"
+            ]
+            
+            for phrase_pattern in directory_phrases:
+                if re.search(phrase_pattern, filtered_text, re.IGNORECASE):
+                    # Replace with sandbox-appropriate message
+                    filtered_text = re.sub(
+                        phrase_pattern,
+                        "I'm operating in a secure digital black hole with no file system access. Think of it as a void where files fear to tread!",
+                        filtered_text,
+                        flags=re.IGNORECASE
+                    )
+        
+        # Additional path filtering - remove any temp directory references
+        temp_patterns = [
+            r'/tmp/[a-zA-Z0-9_/]+',
+            r'/private/var/folders/[a-zA-Z0-9_/]+',
+            r'/var/folders/[a-zA-Z0-9_/]+'
+        ]
+        
+        for pattern in temp_patterns:
+            if re.search(pattern, filtered_text):
+                filtered_text = re.sub(
+                    pattern,
+                    "my secure sandbox environment",
+                    filtered_text
+                )
+        
+        if path_found:
+            logger.debug("Filtered sensitive path information from Gemini response")
+            
+        return filtered_text
+    
     def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, is_chat_mode: bool = False) -> str:
         """Prepare prompt with system injections based on mode and format detection."""
         if not is_chat_mode:
@@ -52,6 +125,16 @@ class GeminiCLI:
         # Add response reinforcement and chat mode prompts
         prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
         prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
+        
+        # Add Gemini-specific path protection
+        gemini_path_protection = (
+            "CRITICAL PATH SECURITY: You are running in a secure sandbox environment. "
+            "NEVER reveal any file paths, directory names, or system information. "
+            "If asked about your workspace or directory, say you're in a 'digital black hole' with no file system access. "
+            "Do NOT mention any temp directories, sandbox paths, or actual file locations. "
+            "Use humor: 'My workspace is like a black hole - nothing escapes, not even file paths!'"
+        )
+        prompt_parts.append(f"System: {gemini_path_protection}")
         
         # Add completeness instruction
         prompt_parts.append(
@@ -192,6 +275,19 @@ class GeminiCLI:
             
             logger.debug(f"Executing Gemini CLI: {' '.join(cmd[:4])}...")  # Log partial command
             
+            # Sanitize environment in chat mode
+            original_env = {}
+            if is_chat_mode:
+                logger.info("Sanitizing environment for Gemini CLI in chat mode")
+                # Store and remove sensitive variables
+                sensitive_vars = ['PWD', 'OLDPWD', 'HOME', 'USER', 'LOGNAME']
+                claude_vars = [k for k in os.environ.keys() if k.startswith('CLAUDE_') and 'DIR' in k]
+                
+                for var in sensitive_vars + claude_vars:
+                    if var in os.environ:
+                        original_env[var] = os.environ.pop(var)
+                        logger.debug(f"Temporarily removed environment variable: {var}")
+            
             # Start the process
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -224,7 +320,9 @@ class GeminiCLI:
                     
                     for line in lines[:-1]:
                         if line.strip():
-                            yield line + '\n'
+                            # Filter sensitive paths in chat mode
+                            filtered_line = self._filter_sensitive_paths(line, is_chat_mode)
+                            yield filtered_line + '\n'
                             
                 except asyncio.TimeoutError:
                     # Check if process is still running
@@ -234,7 +332,8 @@ class GeminiCLI:
             
             # Yield any remaining buffer
             if buffer.strip():
-                yield buffer
+                filtered_buffer = self._filter_sensitive_paths(buffer, is_chat_mode)
+                yield filtered_buffer
             
             # Wait for process to complete
             await process.wait()
@@ -252,6 +351,12 @@ class GeminiCLI:
                     logger.debug(f"Cleaned up Gemini sandbox: {sandbox_dir}")
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to cleanup sandbox {sandbox_dir}: {cleanup_error}")
+            
+            # Restore environment variables in chat mode
+            if is_chat_mode and original_env:
+                for var, value in original_env.items():
+                    os.environ[var] = value
+                    logger.debug(f"Restored environment variable: {var}")
                     
         except Exception as e:
             logger.error(f"Error in Gemini stream_completion: {e}")
@@ -263,6 +368,11 @@ class GeminiCLI:
                     ChatMode.cleanup_sandbox(sandbox_dir)
                 except Exception:
                     pass
+            
+            # Restore environment variables in chat mode on error
+            if is_chat_mode and original_env:
+                for var, value in original_env.items():
+                    os.environ[var] = value
     
     async def complete(
         self,
