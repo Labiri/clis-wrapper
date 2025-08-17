@@ -57,9 +57,38 @@ class ImageHandler:
         self.sandbox_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"ImageHandler initialized with sandbox_dir: {self.sandbox_dir}")
     
+    def _get_new_messages(self, messages: List[Dict]) -> List[Dict]:
+        """
+        Get only new messages that haven't been processed yet.
+        New messages = messages after the last assistant response.
+        
+        Args:
+            messages: List of all message dictionaries
+            
+        Returns:
+            List of new messages to process
+        """
+        if not messages:
+            return []
+        
+        # Find the index of the last assistant message
+        last_assistant_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get('role') == 'assistant':
+                last_assistant_idx = i
+                logger.debug(f"Found last assistant message at index {i} (out of {len(messages)} total)")
+                break
+        
+        # Return messages after the last assistant message
+        # If no assistant message found, all messages are new
+        new_messages = messages[last_assistant_idx + 1:]
+        logger.debug(f"Identified {len(new_messages)} new messages to process")
+        
+        return new_messages
+    
     def process_messages_for_images(self, messages: List[Dict]) -> Dict[str, str]:
         """
-        Process all images from all messages in the conversation.
+        Process images only from new messages in the conversation.
         
         Args:
             messages: List of message dictionaries from OpenAI format
@@ -67,10 +96,19 @@ class ImageHandler:
         Returns:
             Dictionary mapping original image URLs to local file paths
         """
+        # Get only new messages to process
+        new_messages = self._get_new_messages(messages)
+        
+        # Filter to only user messages (ignore assistant/system/tool messages)
+        user_messages = [m for m in new_messages if m.get('role') == 'user']
+        
+        logger.info(f"Processing images from {len(user_messages)} new user messages (out of {len(messages)} total)")
+        
         image_mappings = {}
         total_images = 0
         
-        for msg_idx, message in enumerate(messages):
+        # Process only the new user messages
+        for msg_idx, message in enumerate(user_messages):
             content = message.get('content', '')
             
             # Handle array content (multimodal messages)
