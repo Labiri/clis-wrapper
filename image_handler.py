@@ -318,6 +318,94 @@ class ImageHandler:
         return sorted(unique_paths)  # Sort for consistent ordering
     
     @staticmethod
+    def detect_recent_image_placeholders(
+        messages: List[Dict], 
+        last_n_user_messages: int = 1
+    ) -> Dict[str, Optional[str]]:
+        """
+        Detect image placeholders only from recent user messages.
+        
+        Args:
+            messages: List of message dictionaries
+            last_n_user_messages: Number of recent user messages to check (default: 1)
+            
+        Returns:
+            Dictionary mapping placeholder to None (file path to be resolved)
+        """
+        if not messages:
+            return {}
+        
+        # Find the last N user messages
+        user_messages = []
+        for msg in reversed(messages):
+            if msg.get('role') == 'user':
+                user_messages.append(msg)
+                if len(user_messages) >= last_n_user_messages:
+                    break
+        
+        # Use the existing detection logic but only on recent messages
+        return ImageHandler.detect_image_placeholders(user_messages)
+    
+    @staticmethod
+    def should_process_placeholders(messages: List[Dict]) -> bool:
+        """
+        Determine if we should process image placeholders based on conversation context.
+        
+        This only applies to file-based image placeholders like [Image #1].
+        OpenAI-format images should always be processed.
+        
+        Args:
+            messages: List of message dictionaries
+            
+        Returns:
+            True if we should process placeholders, False if they were already handled
+        """
+        if not messages or len(messages) < 2:
+            return True  # Always process for new conversations
+        
+        # Check the last assistant message
+        for msg in reversed(messages):
+            if msg.get('role') == 'assistant':
+                content = msg.get('content', '')
+                if isinstance(content, str):
+                    content_lower = content.lower()
+                    
+                    # Check if assistant couldn't find images
+                    error_phrases = [
+                        "don't see any image",
+                        "no image attached",
+                        "can't find the image",
+                        "unable to access",
+                        "could you please share the image",
+                        "please provide the image",
+                        "image file not found"
+                    ]
+                    
+                    for phrase in error_phrases:
+                        if phrase in content_lower:
+                            logger.debug(f"Assistant needs image help - found phrase: {phrase}")
+                            return True
+                    
+                    # Check if assistant successfully described an image
+                    success_phrases = [
+                        "the image shows",
+                        "i can see",
+                        "this image displays",
+                        "in the image",
+                        "the picture shows",
+                        "looking at the image"
+                    ]
+                    
+                    for phrase in success_phrases:
+                        if phrase in content_lower:
+                            logger.debug(f"Assistant already processed image - found phrase: {phrase}")
+                            return False
+                
+                break  # Only check the last assistant message
+        
+        return True  # Default to processing if unsure
+    
+    @staticmethod
     def detect_image_placeholders(messages: List[Dict]) -> Dict[str, Optional[str]]:
         """
         Detect image placeholders like [Image #1] in message content.
@@ -385,12 +473,17 @@ class ImageHandler:
         logger.info(f"Found {len(image_files)} image files in sandbox directory")
         return sorted(image_files)  # Sort for consistent ordering
     
-    def resolve_image_placeholders(self, placeholders: Dict[str, Optional[str]]) -> Dict[str, str]:
+    def resolve_image_placeholders(
+        self, 
+        placeholders: Dict[str, Optional[str]], 
+        processed_image_paths: Optional[List[str]] = None
+    ) -> Dict[str, str]:
         """
         Resolve image placeholders to actual file paths in sandbox.
         
         Args:
             placeholders: Dictionary of placeholders to resolve
+            processed_image_paths: List of images that were just processed from OpenAI format
             
         Returns:
             Dictionary mapping placeholder to file path (or error message)
@@ -398,20 +491,33 @@ class ImageHandler:
         resolved = {}
         sandbox_images = self.find_sandbox_images()
         
-        # Create a mapping of image numbers to files (assuming order or naming pattern)
+        # If we have recently processed images from OpenAI format, prefer those
+        if processed_image_paths:
+            logger.debug(f"Using recently processed image paths for mapping: {processed_image_paths}")
+            # Map placeholders to recently processed images in order
+            placeholder_items = list(placeholders.items())
+            for i, (placeholder, _) in enumerate(placeholder_items):
+                if i < len(processed_image_paths):
+                    resolved[placeholder] = processed_image_paths[i]
+                    logger.debug(f"Mapped {placeholder} to recently processed image: {processed_image_paths[i]}")
+            
+            # Return early if we mapped all placeholders
+            if len(resolved) == len(placeholders):
+                logger.info(f"Resolved {len(resolved)} placeholders to recently processed images")
+                return resolved
+        
+        # Fallback to scanning sandbox for existing images
+        logger.debug("Using sandbox scan for image mapping")
+        
+        # Create a mapping of image numbers to files (by creation order)
         numbered_images = {}
-        for img_path in sandbox_images:
-            # Try to extract number from filename if present
-            match = re.search(r'(\d+)', img_path.stem)
-            if match:
-                num = int(match.group(1))
-                numbered_images[num] = img_path
-            # Also map by simple index
-            idx = len(numbered_images) + 1
-            if idx not in numbered_images:
-                numbered_images[idx] = img_path
+        for i, img_path in enumerate(sandbox_images, 1):
+            numbered_images[i] = img_path
         
         for placeholder, _ in placeholders.items():
+            if placeholder in resolved:
+                continue  # Already mapped above
+                
             if '[Image #' in placeholder:
                 # Extract number from placeholder
                 match = re.search(r'#(\d+)', placeholder)
@@ -419,11 +525,14 @@ class ImageHandler:
                     num = int(match.group(1))
                     if num in numbered_images:
                         resolved[placeholder] = str(numbered_images[num])
+                        logger.debug(f"Mapped {placeholder} to sandbox image: {numbered_images[num]}")
                     elif num <= len(sandbox_images):
                         # Use index if specific number not found
                         resolved[placeholder] = str(sandbox_images[num - 1])
+                        logger.debug(f"Mapped {placeholder} to indexed image: {sandbox_images[num - 1]}")
                     else:
                         resolved[placeholder] = f"[No image file found for {placeholder}]"
+                        logger.warning(f"Could not find image for {placeholder}")
             elif '[Image:' in placeholder:
                 # Extract path from placeholder
                 match = re.search(r'\[Image:\s*([^]]+)\]', placeholder)
@@ -433,14 +542,17 @@ class ImageHandler:
                     for img_path in sandbox_images:
                         if img_path.name == ref_path or str(img_path).endswith(ref_path):
                             resolved[placeholder] = str(img_path)
+                            logger.debug(f"Mapped {placeholder} to existing file: {img_path}")
                             break
                     if placeholder not in resolved:
                         # Try as absolute path
                         test_path = Path(ref_path)
                         if test_path.exists() and test_path.is_file():
                             resolved[placeholder] = str(test_path)
+                            logger.debug(f"Mapped {placeholder} to absolute path: {test_path}")
                         else:
                             resolved[placeholder] = f"[Image file not found: {ref_path}]"
+                            logger.warning(f"Could not find file for {placeholder}: {ref_path}")
         
         logger.info(f"Resolved {len(resolved)} image placeholders to file paths")
         return resolved

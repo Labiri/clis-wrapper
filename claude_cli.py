@@ -286,16 +286,24 @@ class ClaudeCodeCLI:
                 # Initialize image handler with sandbox directory
                 image_handler = ImageHandler(sandbox_dir=cwd)
                 
-                # First, try to process OpenAI-format images (base64/URLs)
+                # Always process OpenAI-format images (base64/URLs) when present
                 image_mappings = image_handler.process_messages_for_images(messages)
                 
-                # Also detect file-based image placeholders (Roo/Cline format)
-                image_placeholders = ImageHandler.detect_image_placeholders(messages)
+                # Always check for file-based image placeholders to provide current paths
+                # Note: We always process placeholders because each request gets a new sandbox
+                # with new file paths, even if the conversation mentions the same [Image #1]
+                image_placeholders = ImageHandler.detect_recent_image_placeholders(messages, last_n_user_messages=1)
+                
+                if image_placeholders:
+                    logger.info(f"Detected {len(image_placeholders)} image placeholders - will map to current sandbox files")
+                else:
+                    logger.debug("No image placeholders found in recent messages")
                 
                 if image_placeholders:
                     logger.info(f"Detected {len(image_placeholders)} image placeholders in messages")
-                    # Resolve placeholders to actual file paths in sandbox
-                    resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders)
+                    # Resolve placeholders to actual file paths, preferring recently processed images
+                    processed_paths = image_handler.get_image_references_for_prompt(image_mappings) if image_mappings else None
+                    resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders, processed_paths)
                     
                     # Add clear instructions to the prompt about image locations
                     if resolved_placeholders:
@@ -316,13 +324,20 @@ class ClaudeCodeCLI:
                 if image_mappings:
                     logger.info(f"Processed {len(image_mappings)} OpenAI-format images, saved to sandbox: {sandbox_dir}")
                     
-                    # Include image paths in the prompt
+                    # Include image paths in the prompt with explicit instructions
                     image_paths = image_handler.get_image_references_for_prompt(image_mappings)
                     if image_paths:
-                        # Add image references to the prompt
-                        image_refs = "\n".join([f"Image file available: {path}" for path in image_paths])
-                        prompt = f"{prompt}\n\n{image_refs}"
-                        logger.debug(f"Added {len(image_paths)} image references to prompt")
+                        # Create clear, numbered instructions for Claude
+                        image_instructions = ["IMPORTANT: Images are available for analysis. You MUST use the Read tool to view them:"]
+                        for i, path in enumerate(image_paths, 1):
+                            image_instructions.append(f"  Image {i}: {path}")
+                        
+                        image_instructions.append("\nYou MUST use the Read tool with these exact file paths to see the images.")
+                        image_instructions.append("Do NOT use any other tools to analyze the images - only the Read tool works.")
+                        
+                        image_guide = "\n".join(image_instructions)
+                        prompt = f"{prompt}\n\n{image_guide}"
+                        logger.info(f"Added explicit Read tool instructions for {len(image_paths)} images")
             
             # Conditionally set allowed tools based on image presence
             allowed_tools = ChatMode.get_allowed_tools_for_request(messages or [], is_chat_mode)
@@ -474,16 +489,22 @@ class ClaudeCodeCLI:
                         # In normal mode, save to temp directory or current directory
                         image_handler = ImageHandler(sandbox_dir=cwd)
                         
-                        # Process OpenAI-format images
+                        # Always process OpenAI-format images
                         image_mappings = image_handler.process_messages_for_images(messages)
                         
-                        # Also detect file-based image placeholders
-                        image_placeholders = ImageHandler.detect_image_placeholders(messages)
+                        # Always check for placeholders to provide current file paths
+                        image_placeholders = ImageHandler.detect_recent_image_placeholders(messages, last_n_user_messages=1)
+                        
+                        if image_placeholders:
+                            logger.info(f"Detected {len(image_placeholders)} image placeholders in normal mode - mapping to current files")
+                        else:
+                            logger.debug("No image placeholders found in recent messages (normal mode)")
                         
                         if image_placeholders:
                             logger.info(f"Detected {len(image_placeholders)} image placeholders in normal mode")
-                            # Resolve placeholders to actual file paths
-                            resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders)
+                            # Resolve placeholders to actual file paths, preferring recently processed images
+                            processed_paths = image_handler.get_image_references_for_prompt(image_mappings) if image_mappings else None
+                            resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders, processed_paths)
                             
                             # Add instructions about image locations
                             if resolved_placeholders:
@@ -502,13 +523,20 @@ class ClaudeCodeCLI:
                         if image_mappings:
                             logger.info(f"Processed {len(image_mappings)} OpenAI-format images in normal mode")
                             
-                            # Include image paths in the prompt
+                            # Include image paths in the prompt with explicit instructions
                             image_paths = image_handler.get_image_references_for_prompt(image_mappings)
                             if image_paths:
-                                # Add image references to the prompt
-                                image_refs = "\n".join([f"Image file available: {path}" for path in image_paths])
-                                prompt = f"{prompt}\n\n{image_refs}"
-                                logger.debug(f"Added {len(image_paths)} image references to prompt")
+                                # Create clear instructions for Claude
+                                image_instructions = ["IMPORTANT: Images are available for analysis. You MUST use the Read tool to view them:"]
+                                for i, path in enumerate(image_paths, 1):
+                                    image_instructions.append(f"  Image {i}: {path}")
+                                
+                                image_instructions.append("\nYou MUST use the Read tool with these exact file paths to see the images.")
+                                image_instructions.append("Do NOT use any other tools to analyze the images - only the Read tool works.")
+                                
+                                image_guide = "\n".join(image_instructions)
+                                prompt = f"{prompt}\n\n{image_guide}"
+                                logger.info(f"Added explicit Read tool instructions for {len(image_paths)} images in normal mode")
                     
                     # Normal mode - no prompt injection for standard requests
                     enhanced_prompt = prompt
