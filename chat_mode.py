@@ -27,6 +27,77 @@ class ChatMode:
         return ["WebSearch", "WebFetch"]
     
     @staticmethod
+    def get_allowed_tools_for_request(messages: List[Dict[str, Any]], is_chat_mode: bool) -> Optional[List[str]]:
+        """
+        Conditionally determine allowed tools based on message content.
+        
+        Args:
+            messages: List of message dictionaries from the request
+            is_chat_mode: Whether chat mode is active
+            
+        Returns:
+            List of allowed tools if in chat mode, None otherwise (no restrictions)
+        """
+        if not is_chat_mode:
+            return None  # No tool restrictions in normal mode
+        
+        # Start with base chat mode tools
+        base_tools = ["WebSearch", "WebFetch"]
+        
+        # Check if any message contains images
+        has_images = ChatMode._check_messages_for_images(messages)
+        
+        if has_images:
+            # Enable Read tool for image analysis
+            logger.info("Images detected in chat mode - temporarily enabling Read tool for image analysis")
+            return base_tools + ["Read"]
+        
+        return base_tools
+    
+    @staticmethod
+    def _check_messages_for_images(messages: List[Dict[str, Any]]) -> bool:
+        """
+        Check if any message in the conversation contains images.
+        
+        This checks for:
+        1. OpenAI-format image_url content parts
+        2. File-based image placeholders like [Image #1]
+        
+        Args:
+            messages: List of message dictionaries
+            
+        Returns:
+            True if images are found, False otherwise
+        """
+        import re
+        
+        # Pattern to match [Image #N] or [Image: path]
+        image_placeholder_pattern = re.compile(r'\[Image[:\s]+(?:#\d+|[^]]+)\]')
+        
+        for message in messages:
+            content = message.get('content', '')
+            
+            # Check for array content (multimodal messages with image_url)
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get('type') == 'image_url':
+                        return True
+                    # Also check text parts for placeholders
+                    if isinstance(part, dict) and part.get('type') == 'text':
+                        text = part.get('text', '')
+                        if image_placeholder_pattern.search(text):
+                            logger.debug("Found image placeholder in text content part")
+                            return True
+            
+            # Check string content for image placeholders
+            elif isinstance(content, str):
+                if image_placeholder_pattern.search(content):
+                    logger.debug(f"Found image placeholder in string content: {content[:100]}...")
+                    return True
+        
+        return False
+    
+    @staticmethod
     def create_sandbox() -> str:
         """Create a temporary sandbox directory for isolated execution."""
         sandbox_dir = tempfile.mkdtemp(prefix="claude_chat_sandbox_")

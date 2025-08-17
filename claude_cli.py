@@ -12,6 +12,9 @@ from chat_mode import ChatMode
 from prompts import ChatModePrompts, FormatDetector, inject_prompts
 from xml_detector import DeterministicXMLDetector
 
+# Import image handling
+from image_handler import ImageHandler
+
 logger = logging.getLogger(__name__)
 
 # Pre-compiled regex patterns for performance
@@ -274,8 +277,55 @@ class ClaudeCodeCLI:
             sandbox_dir = ChatMode.create_sandbox()
             cwd = Path(sandbox_dir)
             
-            # Force allowed tools to chat mode tools
-            allowed_tools = ChatMode.get_allowed_tools()
+            # Process images if present in messages
+            image_handler = None
+            image_mappings = {}
+            image_placeholders = {}
+            
+            if messages:
+                # Initialize image handler with sandbox directory
+                image_handler = ImageHandler(sandbox_dir=cwd)
+                
+                # First, try to process OpenAI-format images (base64/URLs)
+                image_mappings = image_handler.process_messages_for_images(messages)
+                
+                # Also detect file-based image placeholders (Roo/Cline format)
+                image_placeholders = ImageHandler.detect_image_placeholders(messages)
+                
+                if image_placeholders:
+                    logger.info(f"Detected {len(image_placeholders)} image placeholders in messages")
+                    # Resolve placeholders to actual file paths in sandbox
+                    resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders)
+                    
+                    # Add clear instructions to the prompt about image locations
+                    if resolved_placeholders:
+                        image_instructions = ["Image files are available in the sandbox:"]
+                        for placeholder, file_path in resolved_placeholders.items():
+                            if not file_path.startswith("[No image"):
+                                image_instructions.append(f"  {placeholder} -> {file_path}")
+                                logger.debug(f"Mapped {placeholder} to {file_path}")
+                        
+                        if len(image_instructions) > 1:
+                            # Add instructions to help Claude find the images
+                            image_guide = "\n".join(image_instructions)
+                            image_guide += "\n\nUse the Read tool with these file paths to view the images."
+                            prompt = f"{prompt}\n\n{image_guide}"
+                            logger.info(f"Added image location guide for {len(resolved_placeholders)} placeholders")
+                
+                # Handle processed OpenAI-format images
+                if image_mappings:
+                    logger.info(f"Processed {len(image_mappings)} OpenAI-format images, saved to sandbox: {sandbox_dir}")
+                    
+                    # Include image paths in the prompt
+                    image_paths = image_handler.get_image_references_for_prompt(image_mappings)
+                    if image_paths:
+                        # Add image references to the prompt
+                        image_refs = "\n".join([f"Image file available: {path}" for path in image_paths])
+                        prompt = f"{prompt}\n\n{image_refs}"
+                        logger.debug(f"Added {len(image_paths)} image references to prompt")
+            
+            # Conditionally set allowed tools based on image presence
+            allowed_tools = ChatMode.get_allowed_tools_for_request(messages or [], is_chat_mode)
             
             # Prepare prompt with injections
             logger.debug(f"Original prompt length: {len(prompt)}")
@@ -414,6 +464,52 @@ class ClaudeCodeCLI:
                     # Normal mode - use default working directory
                     cwd = self.cwd
                     
+                    # Process images if present in messages (normal mode)
+                    image_handler = None
+                    image_mappings = {}
+                    image_placeholders = {}
+                    
+                    if messages:
+                        # Initialize image handler
+                        # In normal mode, save to temp directory or current directory
+                        image_handler = ImageHandler(sandbox_dir=cwd)
+                        
+                        # Process OpenAI-format images
+                        image_mappings = image_handler.process_messages_for_images(messages)
+                        
+                        # Also detect file-based image placeholders
+                        image_placeholders = ImageHandler.detect_image_placeholders(messages)
+                        
+                        if image_placeholders:
+                            logger.info(f"Detected {len(image_placeholders)} image placeholders in normal mode")
+                            # Resolve placeholders to actual file paths
+                            resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders)
+                            
+                            # Add instructions about image locations
+                            if resolved_placeholders:
+                                image_instructions = ["Image files are available:"]
+                                for placeholder, file_path in resolved_placeholders.items():
+                                    if not file_path.startswith("[No image"):
+                                        image_instructions.append(f"  {placeholder} -> {file_path}")
+                                        logger.debug(f"Mapped {placeholder} to {file_path}")
+                                
+                                if len(image_instructions) > 1:
+                                    image_guide = "\n".join(image_instructions)
+                                    image_guide += "\n\nUse the Read tool with these file paths to view the images."
+                                    prompt = f"{prompt}\n\n{image_guide}"
+                                    logger.info(f"Added image location guide for {len(resolved_placeholders)} placeholders")
+                        
+                        if image_mappings:
+                            logger.info(f"Processed {len(image_mappings)} OpenAI-format images in normal mode")
+                            
+                            # Include image paths in the prompt
+                            image_paths = image_handler.get_image_references_for_prompt(image_mappings)
+                            if image_paths:
+                                # Add image references to the prompt
+                                image_refs = "\n".join([f"Image file available: {path}" for path in image_paths])
+                                prompt = f"{prompt}\n\n{image_refs}"
+                                logger.debug(f"Added {len(image_paths)} image references to prompt")
+                    
                     # Normal mode - no prompt injection for standard requests
                     enhanced_prompt = prompt
                     
@@ -490,6 +586,14 @@ class ClaudeCodeCLI:
                             os.environ.pop(key, None)
                         else:
                             os.environ[key] = original_value
+                
+                # Cleanup image handler if it was created
+                if 'image_handler' in locals() and image_handler:
+                    try:
+                        image_handler.cleanup()
+                        logger.debug("Cleaned up image handler temporary files")
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup image handler: {e}")
                 
                 # Note: Sandbox cleanup moved to main.py to avoid premature cleanup
                 

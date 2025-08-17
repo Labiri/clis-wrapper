@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any, Union, Literal
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, PrivateAttr
 from datetime import datetime
 import uuid
 import logging
@@ -7,33 +7,100 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class ContentPart(BaseModel):
-    """Content part for multimodal messages (OpenAI format)."""
+class ImageUrl(BaseModel):
+    """Image URL object for OpenAI format."""
+    url: str  # Can be a base64 data URL or HTTP/HTTPS URL
+    detail: Optional[Literal["low", "high", "auto"]] = "auto"
+
+
+class TextContentPart(BaseModel):
+    """Text content part for multimodal messages."""
     type: Literal["text"]
     text: str
+
+
+class ImageContentPart(BaseModel):
+    """Image content part for multimodal messages."""
+    type: Literal["image_url"]
+    image_url: ImageUrl
+
+
+# Union type for content parts - can be text or image
+ContentPart = Union[TextContentPart, ImageContentPart]
 
 
 class Message(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: Union[str, List[ContentPart]]
     name: Optional[str] = None
+    # Store original content for image processing (private attr won't be serialized)
+    _original_content: Optional[Union[str, List[Dict]]] = PrivateAttr(default=None)
     
     @model_validator(mode='after')
     def normalize_content(self):
-        """Convert array content to string for Claude Code compatibility."""
+        """Convert array content to string for Claude Code compatibility.
+        
+        Note: This only extracts text parts for now. Image processing happens
+        separately in the image_handler module to maintain separation of concerns.
+        """
+        # Store original content before normalization for image processing
         if isinstance(self.content, list):
+            # Store the raw dict representation for image handler
+            original_list = []
+            for part in self.content:
+                if isinstance(part, (TextContentPart, ImageContentPart)):
+                    # Convert Pydantic models to dicts
+                    original_list.append(part.model_dump())
+                elif isinstance(part, dict):
+                    original_list.append(part)
+            self._original_content = original_list
+            
             # Extract text from content parts and concatenate
             text_parts = []
-            for part in self.content:
-                if isinstance(part, ContentPart) and part.type == "text":
-                    text_parts.append(part.text)
-                elif isinstance(part, dict) and part.get("type") == "text":
-                    text_parts.append(part.get("text", ""))
+            has_images = False
             
-            # Join all text parts with newlines
-            self.content = "\n".join(text_parts) if text_parts else ""
+            for part in self.content:
+                # Handle Pydantic model instances
+                if isinstance(part, TextContentPart):
+                    text_parts.append(part.text)
+                elif isinstance(part, ImageContentPart):
+                    has_images = True
+                    # Images will be processed separately by ImageHandler
+                # Handle dict representations (from JSON parsing)
+                elif isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif part.get("type") == "image_url":
+                        has_images = True
+                        # Images will be processed separately
+            
+            # Log if images were found (for debugging)
+            if has_images:
+                logger.debug(f"Message contains image content parts (will be processed separately)")
+            
+            # Join all text parts with spaces (not newlines, to preserve original formatting)
+            self.content = " ".join(text_parts) if text_parts else ""
+        else:
+            # For string content, store as-is
+            self._original_content = self.content
             
         return self
+    
+    def model_dump(self, **kwargs):
+        """Override model_dump to include original content for image processing."""
+        data = super().model_dump(**kwargs)
+        # Use original content if available
+        if self._original_content is not None:
+            data['content'] = self._original_content
+        return data
+    
+    def dict(self, **kwargs):
+        """Override dict to include original content for image processing."""
+        data = super().dict(**kwargs)
+        # Use original content if available
+        if self._original_content is not None:
+            data['content'] = self._original_content
+        return data
 
 
 class ChatCompletionRequest(BaseModel):

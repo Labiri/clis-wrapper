@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from models import Message
 import re
 
@@ -73,6 +73,98 @@ class MessageAdapter:
         return prompt, system_prompt
     
     @staticmethod
+    def messages_to_prompt_with_images(
+        messages: List[Message], 
+        image_mappings: Dict[str, str]
+    ) -> tuple[str, Optional[str], List[str]]:
+        """
+        Convert OpenAI messages to Claude Code prompt format with image references.
+        
+        Args:
+            messages: List of Message objects
+            image_mappings: Dictionary mapping image URLs to local file paths
+            
+        Returns:
+            Tuple of (prompt, system_prompt, list_of_image_paths)
+        """
+        system_prompt = None
+        conversation_parts = []
+        referenced_images = []
+        
+        for message in messages:
+            if message.role == "system":
+                # Use the last system message as the system prompt
+                system_prompt = message.content
+            else:
+                # Process the content to include image references
+                content = MessageAdapter._process_content_with_images(
+                    message.content, 
+                    image_mappings, 
+                    referenced_images
+                )
+                
+                if message.role == "user":
+                    conversation_parts.append(f"Human: {content}")
+                elif message.role == "assistant":
+                    conversation_parts.append(f"Assistant: {content}")
+        
+        # Join conversation parts
+        prompt = "\n\n".join(conversation_parts)
+        
+        # If the last message wasn't from the user, add a prompt for assistant
+        if messages and messages[-1].role != "user":
+            prompt += "\n\nHuman: Please continue."
+        
+        # Get unique image paths
+        unique_image_paths = list(set(referenced_images))
+        
+        return prompt, system_prompt, unique_image_paths
+    
+    @staticmethod
+    def _process_content_with_images(
+        content: Union[str, List[Any]], 
+        image_mappings: Dict[str, str],
+        referenced_images: List[str]
+    ) -> str:
+        """
+        Process message content to include image file references.
+        
+        Args:
+            content: Message content (string or list of content parts)
+            image_mappings: URL to file path mappings
+            referenced_images: List to append referenced image paths to
+            
+        Returns:
+            Processed content string with image references
+        """
+        if isinstance(content, str):
+            return content
+        
+        # Process array content
+        text_parts = []
+        
+        for part in content:
+            if isinstance(part, dict):
+                if part.get('type') == 'text':
+                    text_parts.append(part.get('text', ''))
+                elif part.get('type') == 'image_url':
+                    # Get the image URL
+                    image_url = part.get('image_url', {}).get('url', '')
+                    
+                    # Look up the local file path
+                    if image_url in image_mappings:
+                        file_path = image_mappings[image_url]
+                        # Add reference to the image in the text
+                        text_parts.append(f"[Image: {file_path}]")
+                        referenced_images.append(file_path)
+                    else:
+                        # Image wasn't processed (maybe failed to download)
+                        text_parts.append("[Image: Failed to process]")
+        
+        # Join text parts with spaces
+        return " ".join(text_parts) if text_parts else ""
+    
+    @staticmethod
     def filter_content(content: str) -> str:
         """
         Filter content for unsupported features and tool usage.
@@ -119,13 +211,8 @@ class MessageAdapter:
             for pattern in tool_patterns:
                 content = re.sub(pattern, '', content, flags=re.DOTALL)
         
-        # Pattern to match image references or base64 data
-        image_pattern = r'\[Image:.*?\]|data:image/.*?;base64,.*?(?=\s|$)'
-        
-        def replace_image(match):
-            return "[Image: Content not supported by Claude Code]"
-        
-        content = re.sub(image_pattern, replace_image, content)
+        # No longer filter out images - they are now supported!
+        # Images are processed separately by the ImageHandler
         
         # Clean up extra whitespace and newlines
         content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)  # Multiple newlines to double
