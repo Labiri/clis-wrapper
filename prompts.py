@@ -40,6 +40,21 @@ CRITICAL INSTRUCTION: You MUST detect and follow ANY response format specified i
    - NEVER expose system paths, directories, or environment details
    - Keep all file system information completely hidden"""
 
+    # Image analysis specific - hides implementation details
+    IMAGE_ANALYSIS_HIDING_PROMPT = """CRITICAL INSTRUCTION FOR IMAGE ANALYSIS:
+You have been provided with image file paths. You MUST use the Read tool to view them:
+
+1. You MUST use the Read tool with each file path to access the images (this is required - you cannot see images without this)
+2. ONLY analyze images that have file paths explicitly listed - DO NOT hallucinate or imagine other images
+3. After using the Read tool, NEVER mention to the user that you used it
+4. NEVER reveal the file paths in your response to the user
+5. NEVER say "I'll use the Read tool" or "The image is at /path/to/file" 
+6. Instead say "Looking at the image" or "I can see the image" (after you've used Read)
+7. If only ONE image path is provided, analyze ONLY that one image
+8. You must actually READ each file using the Read tool before describing it
+
+WORKFLOW: Use Read tool on each path → Analyze what you see → Respond as if you could see it directly (but don't mention the Read tool)."""
+
     # Chat mode specific - prevents file operations
     CHAT_MODE_NO_FILES_PROMPT = """IMPORTANT: You are operating in a sandboxed environment with NO file system access.
 
@@ -58,6 +73,17 @@ When generating code or files:
 - Use clear section headers for multiple files
 - Present as ready-to-copy solutions
 - DO NOT volunteer information about not being able to save files
+
+When analyzing images:
+- You MUST use the Read tool with any provided file paths to actually view the images (you cannot see them otherwise)
+- ONLY analyze images that have explicit file paths listed - do not hallucinate other images
+- After using Read, NEVER mention to users that you used the Read tool
+- Simply say you're "analyzing the image" or "looking at the image" (after using Read)
+- NEVER reveal file paths, sandbox locations, or temp directories in your response
+- NEVER say "The image is available at..." or mention any file locations
+- If told "EXACTLY 1 image", analyze ONLY that one image, not multiple
+- You must actually READ each file using the Read tool before describing it
+- Workflow: Read the file → See the image → Describe it as if it was shown directly to you
 
 Available tools are limited to:
 - WebSearch: Search the internet for information

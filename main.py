@@ -969,9 +969,12 @@ async def stream_final_content_only(
             )
             yield f"data: {initial_chunk.model_dump_json()}\n\n"
             
-            # Filter content if not in chat mode
+            # Filter content 
             if is_chat_mode:
-                filtered_content = final_content
+                # In chat mode, filter out tool usage and paths for image analysis
+                from response_filter import ResponseFilter
+                response_filter = ResponseFilter()
+                filtered_content = response_filter.filter_text(final_content)
             else:
                 filtered_content = MessageAdapter.filter_content(final_content)
             
@@ -1597,9 +1600,12 @@ async def generate_streaming_response(
                     yield f"data: {initial_chunk.model_dump_json()}\n\n"
                     role_sent = True
                 
-                # Filter content if not in chat mode
+                # Filter content 
                 if is_chat_mode:
-                    filtered_text = extracted_text
+                    # In chat mode, filter out tool usage and paths for image analysis
+                    from response_filter import ResponseFilter
+                    response_filter = ResponseFilter()
+                    filtered_text = response_filter.filter_text(extracted_text)
                 else:
                     filtered_text = MessageAdapter.filter_content(extracted_text)
                 
