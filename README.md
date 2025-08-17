@@ -17,6 +17,7 @@ An OpenAI API-compatible wrapper for **Claude Code** and **Google Gemini**, allo
 - ✅ **Session continuity** with conversation history across requests
 - ✅ **Session management endpoints** for full session control
 - ✅ **Chat mode** for sandboxed, secure chat-only operation 🔒
+- ✅ **Multimodal image support** with intelligent processing 🖼️
 
 ### 🆕 Gemini Support
 - ✅ **Native Gemini CLI integration** - Uses Gemini CLI directly
@@ -61,6 +62,7 @@ An OpenAI API-compatible wrapper for **Claude Code** and **Google Gemini**, allo
 - **Optional tool usage** - Enable Claude Code tools (Read, Write, Bash, etc.) when needed
 - **Fast default mode** - Tools disabled by default for OpenAI API compatibility
 - **Chat mode** - Sandboxed execution with no file system access for secure chat APIs
+- **Multimodal image support** - Process images in OpenAI format and file-based references
 - **Progress markers** - Optional streaming progress indicators ("Working on it...", "Still processing...") with exponential backoff
 - **Development mode** with auto-reload (`uvicorn --reload`)
 - **Interactive API key protection** - Optional security with auto-generated tokens
@@ -1001,6 +1003,76 @@ Chat mode is ideal for:
 - **Multi-tenant Services**: Ensure complete isolation between requests
 - **Development Tools**: IDEs and extensions that need AI assistance without file system access
 
+## 🖼️ Multimodal Image Support
+
+The wrapper now provides comprehensive image support, handling both OpenAI-format images and file-based references commonly used by AI coding assistants.
+
+### Supported Image Formats
+
+1. **OpenAI Format** - Standard multimodal messages:
+   ```json
+   {
+     "role": "user",
+     "content": [
+       {"type": "text", "text": "What's in this image?"},
+       {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+     ]
+   }
+   ```
+
+2. **File-Based References** - Used by Roo/Cline and similar tools:
+   ```json
+   {
+     "role": "user",
+     "content": "Analyze this image:\n[Image #1]"
+   }
+   ```
+
+### Intelligent Image Processing
+
+The wrapper uses **message boundary detection** to intelligently process only new images:
+
+- **First Message**: Processes all images when no assistant response exists yet
+- **Conversation History**: Identifies messages after the last assistant response as "new"
+- **Avoids Reprocessing**: Historical images from previous turns are not re-analyzed
+- **Stateless Operation**: Works within ephemeral sandbox constraints
+
+### How It Works
+
+1. **Image Detection**: Automatically detects images in messages (both formats)
+2. **Smart Processing**: Uses message flow analysis to identify new vs. historical images
+3. **Sandbox Saving**: Saves images to sandbox directory for Claude to access
+4. **Tool Enablement**: Conditionally enables Read tool when images are present
+5. **Path Mapping**: Maps placeholders like `[Image #1]` to actual file paths
+
+### Technical Details
+
+- **Maximum Images**: 20 per request
+- **Size Limit**: 3.75 MB per image
+- **Supported Types**: PNG, JPEG, GIF, WebP, BMP, TIFF
+- **Processing**: Base64 decoding, URL downloading, caching to avoid duplicates
+- **Sandbox Isolation**: Each request gets a fresh sandbox in chat mode
+
+### Example Usage
+
+```python
+import openai
+
+client = openai.OpenAI(base_url="http://localhost:8000/v1", api_key="dummy")
+
+# Send an image for analysis
+response = client.chat.completions.create(
+    model="claude-3-5-sonnet-latest-chat",
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "What's in this image?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+        ]
+    }]
+)
+```
+
 ## API Endpoints
 
 ### Core Endpoints
@@ -1018,7 +1090,6 @@ Chat mode is ideal for:
 ## Limitations & Roadmap
 
 ### 🚫 **Current Limitations**
-- **Images in messages** are converted to text placeholders
 - **Function calling** not supported (tools work automatically based on prompts)
 - **OpenAI parameters** not yet mapped: `temperature`, `top_p`, `max_tokens`, `logit_bias`, `presence_penalty`, `frequency_penalty`
 - **Multiple responses** (`n > 1`) not supported
@@ -1030,6 +1101,7 @@ Chat mode is ideal for:
 - [ ] **MCP integration** - Model Context Protocol server support
 
 ### ✅ **Recent Improvements**
+- **✅ Multimodal Images**: Full support for images in both OpenAI and file-based formats
 - **✅ SDK Integration**: Official Python SDK replaces subprocess calls
 - **✅ Real Metadata**: Accurate costs and token counts from SDK
 - **✅ Multi-auth**: Support for CLI, API key, Bedrock, and Vertex AI authentication  
