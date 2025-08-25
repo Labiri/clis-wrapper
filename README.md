@@ -1,72 +1,70 @@
-# Claude Code & Gemini OpenAI API Wrapper
+# Multi-AI CLI OpenAI API Wrapper
 
-An OpenAI API-compatible wrapper for **Claude Code** and **Google Gemini**, allowing you to use both AI models with any OpenAI client library. **Now with dual-provider support** - seamlessly switch between Claude and Gemini models using the same API.
+A unified OpenAI API-compatible endpoint for multiple AI CLIs, currently supporting **Anthropic Claude** and **Google Gemini**. The quickest and easiest way to leverage multiple AI providers through a single, standardized API interface.
+
+## Attribution & History
+
+This project began as a fork of the excellent [claude-code-openai-wrapper](https://github.com/RichardAtCT/claude-code-openai-wrapper) by RichardAtCT. Due to significant architectural changes and a shift in project focus toward simplified chat mode operations and multi-provider support, it has evolved into an independent repository. 
+
+We are deeply grateful to the original author and contributors for their foundational work that made this project possible. The core infrastructure, Docker setup, and API compatibility layer build upon their excellent implementation.
+
+## Project Goals
+
+This wrapper is being simplified and optimized specifically for **chat mode operations**, making it the ideal solution for:
+
+- **AI Coding Assistants** - Seamless integration with Roo Code, Cline, Cursor, and similar tools
+- **Quick Multi-Provider Access** - Switch between Claude, Gemini, and soon Codex/Qwen without changing your code
+- **Simplified Chat APIs** - Focus on chat completions without the complexity of file operations
+- **Unified Endpoint** - One API to rule them all - no need to manage multiple SDKs or authentication methods
+
+**Coming Soon**: Support for **Codex** and **Qwen** CLIs to expand multi-provider capabilities.
 
 ## Status
 
-🎉 **Production Ready** - All core features working and tested:
+**Production Ready for Chat Mode** - Optimized for AI coding assistants and chat applications:
 
-### Claude Code Support
-- ✅ Chat completions endpoint with **official Claude Code Python SDK**
-- ✅ **Multi-provider authentication** (API key, Bedrock, Vertex AI, CLI auth)
-- ✅ **System prompt support** via SDK options
-- ✅ Dynamic model discovery with automatic updates
-- ✅ **Fast by default** - Tools disabled for OpenAI compatibility (5-10x faster)
-- ✅ Optional tool usage (Read, Write, Bash, etc.) when explicitly enabled
-- ✅ **Real-time cost and token tracking** from SDK
-- ✅ **Session continuity** with conversation history across requests
-- ✅ **Session management endpoints** for full session control
-- ✅ **Chat mode** for sandboxed, secure chat-only operation 🔒
-- ✅ **Multimodal image support** with intelligent processing 🖼️
+### Multi-Provider Support
+- **Anthropic Claude** - All Claude models via official SDK
+- **Google Gemini** - Native CLI integration with all models
+- **Codex** - [Planned]
+- **Qwen** - [Planned]
 
-### 🆕 Gemini Support
-- ✅ **Native Gemini CLI integration** - Uses Gemini CLI directly
-- ✅ **Automatic model routing** - Use `gemini-*` models seamlessly  
-- ✅ **CLI-based streaming** - Direct streaming from Gemini CLI
-- ✅ **No API key required** - Uses CLI authentication
-- ✅ **Sandbox mode** - Optional sandboxed execution
-- ✅ **YOLO mode** - Auto-accept actions when enabled
-- ✅ **Multiple models** - Support for all Gemini models
+### Chat Mode Focus
+- **Sandboxed execution** - Complete isolation for security
+- **No file system access** - Chat-only operation
+- **OpenAI-compatible API** - Drop-in replacement for any OpenAI client
+- **Streaming support** - Real-time responses with progress indicators
+- **Multimodal support** - Image analysis and processing
+- **XML tool format support** - Compatible with Roo/Cline and similar tools
 
-### Shared Features
-- ✅ Streaming and non-streaming responses  
-- ✅ Full OpenAI SDK compatibility
-- ✅ Health, auth status, and models endpoints
-- ✅ **Development mode** with auto-reload
+### Key Features
+- **Automatic model routing** - Use `claude-*` or `gemini-*` prefixes
+- **No API keys required** - Uses CLI authentication
+- **Simple setup** - Get running in under 2 minutes
+- **Docker support** - Easy deployment and scaling
+- **Rate limiting** - Built-in protection against abuse
 
 ## Features
 
-### 🔥 **Core API Compatibility**
-- OpenAI-compatible `/v1/chat/completions` endpoint
-- Support for both streaming and non-streaming responses
-- Compatible with OpenAI Python SDK and all OpenAI client libraries
-- Automatic model discovery and validation
+### Unified Multi-Provider API
+- Single OpenAI-compatible endpoint for multiple AI providers
+- Automatic model routing based on prefixes (`claude-*`, `gemini-*`)
+- Drop-in replacement for OpenAI SDK - no code changes needed
+- Support for streaming and non-streaming responses
 
-### 🛠 **CLI Integration**
-- **Claude Code Python SDK** integration for Claude models
-- **Gemini CLI** integration for Google models
-- **Real-time cost tracking** - actual costs from SDK metadata (Claude)
-- **Session management** - proper session IDs and continuity (Claude)
-- **Enhanced error handling** with detailed authentication diagnostics
-- **No API keys required** - Both use CLI authentication
+### Optimized for Chat Mode
+- **Sandboxed execution** - Each request runs in isolation
+- **No file system access** - Perfect for secure chat APIs
+- **XML tool format support** - Compatible with AI coding assistants
+- **Multimodal support** - Process images in various formats
+- **Progress indicators** - Optional streaming feedback for users
 
-### 🔐 **Multi-Provider Authentication**
-- **Automatic detection** of authentication method
-- **Claude CLI auth** - works with existing `claude auth` setup
-- **Direct API key** - `ANTHROPIC_API_KEY` environment variable
-- **AWS Bedrock** - enterprise authentication with AWS credentials
-- **Google Vertex AI** - GCP authentication support
-
-### ⚡ **Advanced Features**
-- **System prompt support** via SDK options
-- **Optional tool usage** - Enable Claude Code tools (Read, Write, Bash, etc.) when needed
-- **Fast default mode** - Tools disabled by default for OpenAI API compatibility
-- **Chat mode** - Sandboxed execution with no file system access for secure chat APIs
-- **Multimodal image support** - Process images in OpenAI format and file-based references
-- **Progress markers** - Optional streaming progress indicators ("Working on it...", "Still processing...") with exponential backoff
-- **Development mode** with auto-reload (`uvicorn --reload`)
-- **Interactive API key protection** - Optional security with auto-generated tokens
-- **Comprehensive logging** and debugging capabilities
+### Simple Integration
+- **No API keys required** - Uses CLI authentication
+- **2-minute setup** - Clone, install, run
+- **Full OpenAI SDK compatibility** - Works with any OpenAI client
+- **Docker support** - Easy deployment and scaling
+- **Rate limiting** - Built-in protection
 
 ## Quick Start
 
@@ -97,8 +95,8 @@ gemini auth login
 
 ```bash
 # 1. Clone and setup the wrapper
-git clone https://github.com/RichardAtCT/claude-code-openai-wrapper
-cd claude-code-openai-wrapper
+git clone https://github.com/Labiri/clis-wrapper
+cd clis-wrapper
 poetry install
 
 # 2. Start the server
@@ -108,7 +106,7 @@ poetry run uvicorn main:app --reload --port 8000
 poetry run python test_endpoints.py
 ```
 
-🎉 **That's it!** Your OpenAI-compatible Claude Code API is running on `http://localhost:8000`
+**That's it!** Your OpenAI-compatible Claude Code API is running on `http://localhost:8000`
 
 ## Prerequisites
 
@@ -141,8 +139,8 @@ poetry run python test_endpoints.py
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/RichardAtCT/claude-code-openai-wrapper
-   cd claude-code-openai-wrapper
+   git clone https://github.com/Labiri/clis-wrapper
+   cd clis-wrapper
    ```
 
 2. Install dependencies with Poetry:
@@ -237,7 +235,7 @@ RATE_LIMIT_SESSION_PER_MINUTE=15
 RATE_LIMIT_HEALTH_PER_MINUTE=30
 ```
 
-### 🔐 **API Security Configuration**
+### API Security Configuration
 
 The server supports **interactive API key protection** for secure remote access:
 
@@ -253,7 +251,7 @@ poetry run python main.py
 
 # Output:
 # ============================================================
-# 🔐 API Endpoint Security Configuration
+# API Endpoint Security Configuration
 # ============================================================
 # Would you like to protect your API endpoint with an API key?
 # This adds a security layer when accessing your server remotely.
@@ -274,9 +272,9 @@ poetry run python main.py
 **Perfect for:**
 - 🏠 **Local development** - No authentication needed
 - 🌐 **Remote access** - Secure with generated tokens
-- 🔒 **VPN/Tailscale** - Add security layer for remote endpoints
+- **VPN/Tailscale** - Add security layer for remote endpoints
 
-### 📊 **Progress Markers**
+### Progress Markers
 
 Control streaming progress indicators through model name suffixes:
 
@@ -320,7 +318,7 @@ The progress indicators use universal, language-agnostic symbols:
 - Adds dots (·) incrementally to show continued activity
 - Example progression: ⏳ → ⏳· → ◐ → ◐· → ◐·· → ◓ → ◓·
 
-### 🛡️ **Rate Limiting**
+### Rate Limiting
 
 Built-in rate limiting protects against abuse and ensures fair usage:
 
@@ -765,7 +763,7 @@ View all available models and their variants:
 curl http://localhost:8000/v1/models
 ```
 
-## Session Continuity 🆕
+## Session Continuity
 
 The wrapper now supports **session continuity**, allowing you to maintain conversation context across multiple requests. This is a powerful feature that goes beyond the standard OpenAI API.
 
@@ -857,7 +855,7 @@ curl -X DELETE http://localhost:8000/v1/sessions/my-session
 
 See `examples/session_continuity.py` for comprehensive Python examples and `examples/session_curl_example.sh` for curl examples.
 
-## Chat Mode 🔒
+## Chat Mode
 
 The wrapper supports a secure **chat mode** that transforms Claude Code into a sandboxed, chat-only AI with no file system access. This mode is perfect for exposing Claude as a general-purpose chat API while ensuring complete security isolation.
 
@@ -986,10 +984,10 @@ response = client.chat.completions.create(
 
 | Feature | Normal Mode | Chat Mode |
 |---------|------------|-----------|
-| File Operations | ✅ Available (when enabled) | ❌ Blocked |
-| System Commands | ✅ Available (when enabled) | ❌ Blocked |
-| Web Tools | ✅ Available | ✅ Available |
-| Sessions | ✅ Supported | ❌ Disabled |
+| File Operations | Available (when enabled) | Blocked |
+| System Commands | Available (when enabled) | Blocked |
+| Web Tools | Available | Available |
+| Sessions | Supported | Disabled |
 | Working Directory | Project directory | Temporary sandbox |
 | Environment | Full environment | Sanitized environment |
 
@@ -1003,7 +1001,7 @@ Chat mode is ideal for:
 - **Multi-tenant Services**: Ensure complete isolation between requests
 - **Development Tools**: IDEs and extensions that need AI assistance without file system access
 
-## 🖼️ Multimodal Image Support
+## Multimodal Image Support
 
 The wrapper now provides comprehensive image support, handling both OpenAI-format images and file-based references commonly used by AI coding assistants.
 
@@ -1081,7 +1079,7 @@ response = client.chat.completions.create(
 - `GET /v1/auth/status` - Check authentication status and configuration
 - `GET /health` - Health check endpoint
 
-### Session Management Endpoints 🆕
+### Session Management Endpoints
 - `GET /v1/sessions` - List all active sessions
 - `GET /v1/sessions/{session_id}` - Get detailed session information
 - `DELETE /v1/sessions/{session_id}` - Delete a specific session
@@ -1089,25 +1087,25 @@ response = client.chat.completions.create(
 
 ## Limitations & Roadmap
 
-### 🚫 **Current Limitations**
+### Current Limitations
 - **Function calling** not supported (tools work automatically based on prompts)
 - **OpenAI parameters** not yet mapped: `temperature`, `top_p`, `max_tokens`, `logit_bias`, `presence_penalty`, `frequency_penalty`
 - **Multiple responses** (`n > 1`) not supported
 
-### 🛣 **Planned Enhancements** 
+### Planned Enhancements 
 - [ ] **Tool configuration** - allowed/disallowed tools endpoints  
 - [ ] **OpenAI parameter mapping** - temperature, top_p, max_tokens support
 - [ ] **Enhanced streaming** - better chunk handling
 - [ ] **MCP integration** - Model Context Protocol server support
 
-### ✅ **Recent Improvements**
-- **✅ Multimodal Images**: Full support for images in both OpenAI and file-based formats
-- **✅ SDK Integration**: Official Python SDK replaces subprocess calls
-- **✅ Real Metadata**: Accurate costs and token counts from SDK
-- **✅ Multi-auth**: Support for CLI, API key, Bedrock, and Vertex AI authentication  
-- **✅ Session IDs**: Proper session tracking and management
-- **✅ System Prompts**: Full support via SDK options
-- **✅ Session Continuity**: Conversation history across requests with session management
+### Recent Improvements
+- **Multimodal Images**: Full support for images in both OpenAI and file-based formats
+- **SDK Integration**: Official Python SDK replaces subprocess calls
+- **Real Metadata**: Accurate costs and token counts from SDK
+- **Multi-auth**: Support for CLI, API key, Bedrock, and Vertex AI authentication  
+- **Session IDs**: Proper session tracking and management
+- **System Prompts**: Full support via SDK options
+- **Session Continuity**: Conversation history across requests with session management
 
 ## Troubleshooting
 
@@ -1133,14 +1131,14 @@ response = client.chat.completions.create(
 
 ## Testing
 
-### 🧪 **Quick Test Suite**
+### Quick Test Suite
 Test all endpoints with a simple script:
 ```bash
 # Make sure server is running first
 poetry run python test_endpoints.py
 ```
 
-### 📝 **Basic Test Suite**
+### Basic Test Suite
 Run the comprehensive test suite:
 ```bash
 # Make sure server is running first  
@@ -1152,13 +1150,13 @@ TEST_API_KEY=your-generated-key poetry run python test_basic.py
 
 The test suite automatically detects whether API key protection is enabled and provides helpful guidance for providing the necessary authentication.
 
-### 🔍 **Authentication Test**
+### Authentication Test
 Check authentication status:
 ```bash
 curl http://localhost:8000/v1/auth/status | python -m json.tool
 ```
 
-### ⚙️ **Development Tools**
+### Development Tools
 ```bash
 # Install development dependencies
 poetry install --with dev
@@ -1170,7 +1168,7 @@ poetry run black .
 poetry run pytest tests/
 ```
 
-### ✅ **Expected Results**
+### Expected Results
 All tests should show:
 - **4/4 endpoint tests passing**
 - **4/4 basic tests passing** 
