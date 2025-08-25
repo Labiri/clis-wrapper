@@ -1702,7 +1702,7 @@ async def chat_completions(
         if provider == "gemini":
             if request_body.stream:
                 # Gemini streaming response
-                stream_generator = generate_gemini_streaming_response(request_body, request_id, True)
+                stream_generator = generate_gemini_streaming_response(request_body, request_id)
                 return StreamingResponse(
                     stream_generator,
                     media_type="text/event-stream",
@@ -1754,17 +1754,17 @@ async def chat_completions(
                 # Chat mode with progress markers enabled
                 logger.info("Chat mode: Wrapping stream with progress indicators")
                 stream_generator = stream_with_progress_injection(
-                    generate_streaming_response(request_body, request_id, claude_headers, True),
+                    generate_streaming_response(request_body, request_id, claude_headers),
                     request_id,
                     request_body.model
                 )
             elif not show_progress_markers:
                 # Progress markers disabled - show only final content
                 logger.info("Progress markers disabled: Streaming final content only")
-                stream_generator = stream_final_content_only(request_body, request_id, claude_headers, True)
+                stream_generator = stream_final_content_only(request_body, request_id, claude_headers)
             else:
                 # Normal mode - all chunks without progress injection
-                stream_generator = generate_streaming_response(request_body, request_id, claude_headers, True)
+                stream_generator = generate_streaming_response(request_body, request_id, claude_headers)
             
             return StreamingResponse(
                 stream_generator,
