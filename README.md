@@ -21,7 +21,7 @@ This wrapper is being simplified and optimized specifically for **chat mode oper
 
 ## Status
 
-**Production Ready for Chat Mode** - Optimized for AI coding assistants and chat applications:
+**Production Ready** - Optimized for AI coding assistants and chat applications:
 
 ### Multi-Provider Support
 - **Anthropic Claude** - All Claude models via official SDK
@@ -29,9 +29,9 @@ This wrapper is being simplified and optimized specifically for **chat mode oper
 - **Codex** - [Planned]
 - **Qwen** - [Planned]
 
-### Chat Mode Focus
+### Core Features
 - **Sandboxed execution** - Complete isolation for security
-- **No file system access** - Chat-only operation
+- **Web-based tools only** - Search and fetch capabilities
 - **OpenAI-compatible API** - Drop-in replacement for any OpenAI client
 - **Streaming support** - Real-time responses with progress indicators
 - **Multimodal support** - Image analysis and processing
@@ -52,7 +52,7 @@ This wrapper is being simplified and optimized specifically for **chat mode oper
 - Drop-in replacement for OpenAI SDK - no code changes needed
 - Support for streaming and non-streaming responses
 
-### Optimized for Chat Mode
+### Optimized for Secure Chat APIs
 - **Sandboxed execution** - Each request runs in isolation
 - **No file system access** - Perfect for secure chat APIs
 - **XML tool format support** - Compatible with AI coding assistants
@@ -172,10 +172,10 @@ The wrapper automatically routes requests based on the model name:
 - `gemini-1.0-pro` - Stable production model
 - `gemini-2.0-flash-exp` - Experimental features
 
-### Chat Mode Suffixes
-Both Claude and Gemini models support chat mode suffixes:
-- `-chat` - Enable chat mode (no progress markers)
-- `-chat-progress` - Enable chat mode with progress indicators
+### Progress Indicator Suffixes
+Both Claude and Gemini models support progress indicator control:
+- `-chat` - Standard mode (no progress markers)
+- `-chat-progress` - Standard mode with progress indicators
 
 Examples:
 - `claude-3-5-sonnet-20241022-chat`
@@ -201,16 +201,16 @@ MAX_TIMEOUT=600000
 # CORS Configuration
 CORS_ORIGINS=["*"]
 
-# Chat Mode Configuration
-# Chat mode is activated per-request by using model names with suffixes:
-# -chat: Enable chat mode (no progress markers)
-# -chat-progress: Enable chat mode with streaming progress indicators
+# Progress Indicator Configuration
+# Progress indicators are controlled per-request by using model names with suffixes:
+# -chat: Standard mode (no progress markers)
+# -chat-progress: Standard mode with streaming progress indicators
 # Example: claude-3-5-sonnet-20241022-chat-progress
 
-# Chat Mode Session Cleanup
-# Set to false to disable automatic Claude Code session cleanup in chat mode
+# Session Cleanup
+# Set to false to disable automatic Claude Code session cleanup
 # When disabled, sessions will appear in Claude's /resume command
-CHAT_MODE_CLEANUP_SESSIONS=true
+CLEANUP_SESSIONS=true
 
 # Cleanup delay in minutes (default: 720 = 12 hours)
 # Sessions are tracked and cleaned up after this delay
@@ -218,7 +218,7 @@ CHAT_MODE_CLEANUP_SESSIONS=true
 # Note: Claude Code tracks token usage per session. For accurate usage monitoring,
 # sessions should persist long enough to capture complete usage data.
 # 12 hours ensures sessions span daily usage boundaries for better tracking.
-CHAT_MODE_CLEANUP_DELAY_MINUTES=720
+CLEANUP_DELAY_MINUTES=720
 
 # SSE Keep-alive Configuration
 # Interval in seconds between SSE keepalive comments to prevent connection timeouts
@@ -278,12 +278,12 @@ poetry run python main.py
 
 Control streaming progress indicators through model name suffixes:
 
-- **Chat mode with progress markers** (`model-name-chat-progress`)
+- **With progress markers** (`model-name-chat-progress`)
   - Shows initial hourglass (⏳) followed by rotating circles (◐ ◓ ◑ ◒) with dots
   - Uses exponential backoff to avoid being too chatty
   - Perfect for user-facing applications where visual feedback is important
 
-- **Chat mode without progress markers** (`model-name-chat`)
+- **Without progress markers** (`model-name-chat`)
   - **IMPORTANT**: Only streams the final assistant response - all intermediate content is filtered out
   - Completely removes:
     - Tool use messages and results
@@ -710,18 +710,7 @@ response = client.chat.completions.create(
 )
 
 print(response.choices[0].message.content)
-# Output: Fast response without tool usage (default behavior)
-
-# Enable tools when you need them (e.g., to read files)
-response = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022",
-    messages=[
-        {"role": "user", "content": "What files are in the current directory?"}
-    ],
-    extra_body={"enable_tools": True}  # Enable tools for file access
-)
-print(response.choices[0].message.content)
-# Output: Claude will actually read your directory and list the files!
+# Output: Fast response with secure web-based tools only
 
 # Check real costs and tokens
 print(f"Cost: ${response.usage.total_tokens * 0.000003:.6f}")  # Real cost tracking
@@ -763,156 +752,59 @@ View all available models and their variants:
 curl http://localhost:8000/v1/models
 ```
 
-## Session Continuity
+## Conversation Management
 
-The wrapper now supports **session continuity**, allowing you to maintain conversation context across multiple requests. This is a powerful feature that goes beyond the standard OpenAI API.
+The wrapper operates in a **stateless mode** where each request is independent, just like the standard OpenAI API. For conversation continuity, clients should manage conversation state by including the full conversation history in each request's messages array.
 
-### How It Works
+## Secure Chat API
 
-- **Stateless Mode** (default): Each request is independent, just like the standard OpenAI API
-- **Session Mode**: Include a `session_id` to maintain conversation history across requests
+The wrapper provides a secure **sandboxed chat API** that transforms Claude Code into a chat-only AI with no file system access. This design ensures complete security isolation while providing powerful AI capabilities.
 
-### Using Sessions with OpenAI SDK
+### Security Features
 
-```python
-import openai
-
-client = openai.OpenAI(
-    base_url="http://localhost:8000/v1",
-    api_key="not-needed"
-)
-
-# Start a conversation with session continuity
-response1 = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022",
-    messages=[
-        {"role": "user", "content": "Hello! My name is Alice and I'm learning Python."}
-    ],
-    extra_body={"session_id": "my-learning-session"}
-)
-
-# Continue the conversation - Claude remembers the context
-response2 = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022", 
-    messages=[
-        {"role": "user", "content": "What's my name and what am I learning?"}
-    ],
-    extra_body={"session_id": "my-learning-session"}  # Same session ID
-)
-# Claude will remember: "Your name is Alice and you're learning Python."
-```
-
-### Using Sessions with curl
+The wrapper operates with these security constraints:
 
 ```bash
-# First message (add -H "Authorization: Bearer your-key" if auth enabled)
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-3-5-sonnet-20241022",
-    "messages": [{"role": "user", "content": "My favorite color is blue."}],
-    "session_id": "my-session"
-  }'
-
-# Follow-up message - context is maintained
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-3-5-sonnet-20241022", 
-    "messages": [{"role": "user", "content": "What's my favorite color?"}],
-    "session_id": "my-session"
-  }'
-```
-
-### Session Management
-
-The wrapper provides endpoints to manage active sessions:
-
-- `GET /v1/sessions` - List all active sessions
-- `GET /v1/sessions/{session_id}` - Get session details
-- `DELETE /v1/sessions/{session_id}` - Delete a session
-- `GET /v1/sessions/stats` - Get session statistics
-
-```bash
-# List active sessions
-curl http://localhost:8000/v1/sessions
-
-# Get session details
-curl http://localhost:8000/v1/sessions/my-session
-
-# Delete a session
-curl -X DELETE http://localhost:8000/v1/sessions/my-session
-```
-
-### Session Features
-
-- **Automatic Expiration**: Sessions expire after 1 hour of inactivity
-- **Streaming Support**: Session continuity works with both streaming and non-streaming requests
-- **Memory Persistence**: Full conversation history is maintained within the session
-- **Efficient Storage**: Only active sessions are kept in memory
-
-### Examples
-
-See `examples/session_continuity.py` for comprehensive Python examples and `examples/session_curl_example.sh` for curl examples.
-
-## Chat Mode
-
-The wrapper supports a secure **chat mode** that transforms Claude Code into a sandboxed, chat-only AI with no file system access. This mode is perfect for exposing Claude as a general-purpose chat API while ensuring complete security isolation.
-
-### Enabling Chat Mode
-
-Chat mode is activated by using model names with suffixes. The `/v1/models` endpoint lists all variants of supported models:
-
-```bash
-# Normal mode (full capabilities)
+# Standard operation (secure by default)
 curl -X POST http://localhost:8000/v1/chat/completions \
   -d '{"model": "claude-3-5-sonnet-20241022", ...}'
 
-# Chat mode without progress markers (clean output)
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -d '{"model": "claude-3-5-sonnet-20241022-chat", ...}'
-
-# Chat mode with progress markers (user-friendly feedback)
+# With progress markers for user-friendly feedback
 curl -X POST http://localhost:8000/v1/chat/completions \
   -d '{"model": "claude-3-5-sonnet-20241022-chat-progress", ...}'
 ```
 
-This approach allows each request to independently choose its mode and streaming behavior, providing maximum flexibility for different use cases.
-
-### Chat Mode Features
-
-When using chat mode:
-
-- **No File System Access**: All file operations are completely blocked
-- **Limited Tools**: Only WebSearch, WebFetch, and Task tools are available
-- **Sandboxed Execution**: Each request runs in an isolated temporary directory
-- **No Sessions**: Sessions are automatically disabled (clients should manage conversation state)
-- **Format Support**: Automatic detection and support for XML tool formats and JSON responses
-- **Prompt Engineering**: Multiple system prompts ensure chat-only behavior
-- **Automatic Cleanup**: Session files created by Claude Code are automatically removed after each request
-
 ### Security Properties
 
-- **Complete Isolation**: Each request is stateless and runs in a fresh sandbox
+- **No File System Access**: All file operations are completely blocked
+- **Limited Tools**: Only WebSearch and WebFetch tools are available
+- **Sandboxed Execution**: Each request runs in an isolated temporary directory
+- **Stateless Operation**: No persistent sessions (clients manage conversation state)
+- **Format Support**: Automatic detection and support for XML tool formats and JSON responses
+- **Prompt Engineering**: Multiple system prompts ensure secure chat-only behavior
+- **Automatic Cleanup**: Temporary files are automatically removed after each request
+
+### Complete Security Isolation
+
+- **Stateless Operation**: Each request is independent and runs in a fresh sandbox
 - **Path Hiding**: Environment variables that could reveal system paths are removed
 - **Tool Restrictions**: Only web-based tools allowed, no local system access
 - **Automatic Cleanup**: Temporary sandbox directories are cleaned immediately; Claude Code session files are cleaned based on configured delay
 - **Time-Based Cleanup**: Sessions are tracked and cleaned after a delay (default: 12 hours for complete usage tracking)
-- **No Session Persistence**: Sessions are removed after the delay period (configurable via `CHAT_MODE_CLEANUP_SESSIONS` and `CHAT_MODE_CLEANUP_DELAY_MINUTES`)
+- **No Persistence**: Sessions are removed after the delay period (configurable via `CLEANUP_SESSIONS` and `CLEANUP_DELAY_MINUTES`)
 
 ### Important Notes
 
-- **Sessions Disabled**: In chat mode, all session endpoints return errors
-- **Client Responsibility**: Chat clients should handle their own conversation continuity
-- **No Persistence**: Nothing is saved between requests
-- **Tool Override**: The `enable_tools` parameter is ignored; only chat mode tools are available
+- **Stateless Design**: Clients should handle their own conversation continuity
+- **No File Persistence**: Nothing is saved between requests
+- **Web Tools Only**: Only WebSearch and WebFetch tools are available
 
 ### Session Cleanup Configuration
 
 The wrapper provides flexible session cleanup options:
 
-- **`CHAT_MODE_CLEANUP_SESSIONS`**: Master on/off switch for session cleanup (default: `true`)
-- **`CHAT_MODE_CLEANUP_DELAY_MINUTES`**: Minutes to wait before cleanup (default: `720` = 12 hours)
+- **`CLEANUP_SESSIONS`**: Master on/off switch for session cleanup (default: `true`)
+- **`CLEANUP_DELAY_MINUTES`**: Minutes to wait before cleanup (default: `720` = 12 hours)
   - Set to `0` for immediate cleanup after request completion
   - Sessions are tracked and cleaned up by a background task
   - On startup, old sessions exceeding the delay are automatically cleaned
@@ -935,7 +827,7 @@ Claude Code tracks token usage at the session level. Each session file contains 
 
 ### Important Note on Existing Sessions
 
-**Currently, sessions created while `CHAT_MODE_CLEANUP_SESSIONS=false` will NOT be automatically cleaned up when switching to `CHAT_MODE_CLEANUP_SESSIONS=true`.** Only new sessions created after enabling cleanup will be tracked and cleaned. To manually clean old sessions, you'll need to delete them from `~/.claude/projects/` directories containing "claude-chat-sandbox" in their names.
+**Currently, sessions created while `CLEANUP_SESSIONS=false` will NOT be automatically cleaned up when switching to `CLEANUP_SESSIONS=true`.** Only new sessions created after enabling cleanup will be tracked and cleaned. To manually clean old sessions, you'll need to delete them from `~/.claude/projects/` directories containing "claude-chat-sandbox" in their names.
 
 ### Example Usage
 
@@ -948,15 +840,15 @@ client = openai.OpenAI(
     api_key="your-api-key"
 )
 
-# Normal mode - full capabilities with file access
+# Standard secure operation
 response = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022",  # Normal mode
-    messages=[{"role": "user", "content": "Read the file README.md and summarize it"}]
+    model="claude-3-5-sonnet-20241022",
+    messages=[{"role": "user", "content": "Explain quantum computing"}]
 )
 
-# Chat mode - sandboxed without file access
+# With progress markers for user feedback
 response = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022-chat",  # Chat mode (note the -chat suffix)
+    model="claude-3-5-sonnet-20241022-chat-progress",
     messages=[{"role": "user", "content": "Explain quantum computing"}]
 )
 
@@ -980,16 +872,16 @@ response = client.chat.completions.create(
 # Claude will use the XML format if provided by the client
 ```
 
-### Chat Mode vs Normal Mode
+### Secure Design
 
-| Feature | Normal Mode | Chat Mode |
-|---------|------------|-----------|
-| File Operations | Available (when enabled) | Blocked |
-| System Commands | Available (when enabled) | Blocked |
-| Web Tools | Available | Available |
-| Sessions | Supported | Disabled |
-| Working Directory | Project directory | Temporary sandbox |
-| Environment | Full environment | Sanitized environment |
+| Feature | Status |
+|---------|---------|
+| File Operations | Blocked |
+| System Commands | Blocked |
+| Web Tools | Available (WebSearch, WebFetch) |
+| Sessions | Disabled (stateless) |
+| Working Directory | Temporary sandbox |
+| Environment | Sanitized environment |
 
 ### Use Cases
 
@@ -1073,17 +965,11 @@ response = client.chat.completions.create(
 
 ## API Endpoints
 
-### Core Endpoints
-- `POST /v1/chat/completions` - OpenAI-compatible chat completions (supports `session_id`)
+### Available Endpoints
+- `POST /v1/chat/completions` - OpenAI-compatible chat completions
 - `GET /v1/models` - List available models
 - `GET /v1/auth/status` - Check authentication status and configuration
 - `GET /health` - Health check endpoint
-
-### Session Management Endpoints
-- `GET /v1/sessions` - List all active sessions
-- `GET /v1/sessions/{session_id}` - Get detailed session information
-- `DELETE /v1/sessions/{session_id}` - Delete a specific session
-- `GET /v1/sessions/stats` - Get session manager statistics
 
 ## Limitations & Roadmap
 

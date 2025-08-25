@@ -28,13 +28,13 @@ class ClaudeCodeCLI:
     def __init__(self, timeout: int = 600000, cwd: Optional[str] = None):
         self.timeout = timeout / 1000  # Convert ms to seconds
         
-        # Chat mode is determined per request, not at initialization
+        # Always operates in chat mode with sandbox isolation
         self.format_detector = FormatDetector()
         self.prompts = ChatModePrompts()
         self.xml_detector = DeterministicXMLDetector()
         self.last_session_id = None  # Track session ID for cleanup
         
-        # Default working directory - may be overridden in chat mode
+        # Default working directory - will be overridden with sandbox directory
         self.cwd = Path(cwd) if cwd else Path.cwd()
         
         # Import auth manager
@@ -87,9 +87,9 @@ class ClaudeCodeCLI:
             return False
     
     
-    def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, is_chat_mode: bool = False) -> str:
-        """Prepare prompt with system injections based on mode and format detection."""
-        logger.debug(f"Preparing prompt with injections, is_chat_mode={is_chat_mode}")
+    def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None) -> str:
+        """Prepare prompt with system injections based on format detection."""
+        logger.debug("Preparing prompt with injections")
         # Import MessageAdapter to use the format detection
         from message_adapter import MessageAdapter
         import re
@@ -127,7 +127,7 @@ class ClaudeCodeCLI:
             if has_images:
                 logger.info("Detected image analysis context - will inject hiding instructions")
             
-            if xml_required and is_chat_mode:
+            if xml_required:
                 # Layer 1: Prime at the beginning
                 pre_injections.append(
                     "ATTENTION: This conversation uses XML-formatted tools. "
@@ -179,8 +179,8 @@ class ClaudeCodeCLI:
                 post_injections.append(tool_instruction)
                 logger.info("XML ENFORCEMENT ACTIVE: Multi-layer XML response formatting enforcement applied")
                 logger.debug(f"Enforcement layers: pre={len(pre_injections)}, mid={len(mid_injections)}, post={len(post_injections)}")
-            elif is_chat_mode and not xml_required:
-                # Only add full chat mode prompt if there are no XML requirements
+            elif not xml_required:
+                # Only add full prompt if there are no XML requirements
                 pre_injections.append(self.prompts.CHAT_MODE_NO_FILES_PROMPT)
                 
                 # Add image hiding prompt if images are being analyzed
@@ -195,7 +195,7 @@ class ClaudeCodeCLI:
                     "If writing code, include the FULL implementation with all necessary details. "
                     "If explaining concepts, be comprehensive and address all aspects of the question."
                 )
-                logger.debug("Added full chat mode prompt with completeness instruction (no XML format required)")
+                logger.debug("Added full prompt with completeness instruction (no XML format required)")
             
             # Build the final prompt with all injection layers
             final_prompt = prompt
@@ -213,7 +213,7 @@ class ClaudeCodeCLI:
                 final_prompt = final_prompt + "\n\n" + "\n\n".join(post_injections)
             
             # VERIFICATION: If we detected XML tools but no enforcement was added, add it now
-            if xml_required and is_chat_mode:
+            if xml_required:
                 # Check if XML enforcement is present in the final prompt
                 enforcement_present = any([
                     "CRITICAL - THIS IS MANDATORY" in final_prompt,
@@ -240,26 +240,21 @@ class ClaudeCodeCLI:
             prompt_parts = []
             final_parts = []
             
-            # Add response reinforcement only in chat mode
-            if is_chat_mode:
-                prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
-                prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
-                # Add completeness instruction
-                prompt_parts.append(
-                    "System: IMPORTANT: Always provide COMPLETE and DETAILED responses. "
-                    "Do not truncate, abbreviate, or cut off your answers. "
-                    "Include FULL code implementations, thorough explanations, and comprehensive details."
-                )
+            # Add response reinforcement
+            prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
+            prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
+            # Add completeness instruction
+            prompt_parts.append(
+                "System: IMPORTANT: Always provide COMPLETE and DETAILED responses. "
+                "Do not truncate, abbreviate, or cut off your answers. "
+                "Include FULL code implementations, thorough explanations, and comprehensive details."
+            )
             
             # Add user prompt
-            if is_chat_mode:
-                prompt_parts.append(f"User: {prompt}")
-            else:
-                # In normal mode, return prompt as-is
-                return prompt
+            prompt_parts.append(f"User: {prompt}")
             
-            # Detect formats and add final reinforcement if we have messages (chat mode only)
-            if messages and is_chat_mode:
+            # Detect formats and add final reinforcement if we have messages
+            if messages:
                 has_tool_defs, has_json_req = self.format_detector.detect_special_formats(messages)
                 
                 final_reinforcement = self.prompts.get_final_reinforcement(has_tool_defs, has_json_req)
@@ -285,111 +280,108 @@ class ClaudeCodeCLI:
         disallowed_tools: Optional[List[str]] = None,
         session_id: Optional[str] = None,
         continue_session: bool = False,
-        messages: Optional[List[Dict]] = None,
-        is_chat_mode: bool = False
+        messages: Optional[List[Dict]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Run Claude Code using the Python SDK and yield response chunks."""
         
-        # In chat mode, override certain behaviors
-        if is_chat_mode:
-            # Log if session parameters were provided
-            if session_id or continue_session:
-                logger.warning("Session parameters ignored in chat mode - each request is stateless")
+        # Log if session parameters were provided
+        if session_id or continue_session:
+            logger.warning("Session parameters ignored - each request is stateless")
+        
+        # Create sandbox directory for this request
+        sandbox_dir = ChatMode.create_sandbox()
+        cwd = Path(sandbox_dir)
+        
+        # Process images if present in messages
+        image_handler = None
+        image_mappings = {}
+        image_placeholders = {}
+        
+        if messages:
+            # Initialize image handler with sandbox directory
+            image_handler = ImageHandler(sandbox_dir=cwd)
             
-            # Create sandbox directory for this request
-            sandbox_dir = ChatMode.create_sandbox()
-            cwd = Path(sandbox_dir)
+            # Always process OpenAI-format images (base64/URLs) when present
+            image_mappings = image_handler.process_messages_for_images(messages)
             
-            # Process images if present in messages
-            image_handler = None
-            image_mappings = {}
-            image_placeholders = {}
+            # Always check for file-based image placeholders to provide current paths
+            # Note: We always process placeholders because each request gets a new sandbox
+            # with new file paths, even if the conversation mentions the same [Image #1]
+            image_placeholders = ImageHandler.detect_recent_image_placeholders(messages, last_n_user_messages=1)
             
-            if messages:
-                # Initialize image handler with sandbox directory
-                image_handler = ImageHandler(sandbox_dir=cwd)
+            if image_placeholders:
+                logger.info(f"Detected {len(image_placeholders)} image placeholders - will map to current sandbox files")
+            else:
+                logger.debug("No image placeholders found in recent messages")
+            
+            if image_placeholders:
+                logger.info(f"Detected {len(image_placeholders)} image placeholders in messages")
+                # Resolve placeholders to actual file paths, preferring recently processed images
+                processed_paths = image_handler.get_image_references_for_prompt(image_mappings) if image_mappings else None
+                resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders, processed_paths)
                 
-                # Always process OpenAI-format images (base64/URLs) when present
-                image_mappings = image_handler.process_messages_for_images(messages)
-                
-                # Always check for file-based image placeholders to provide current paths
-                # Note: We always process placeholders because each request gets a new sandbox
-                # with new file paths, even if the conversation mentions the same [Image #1]
-                image_placeholders = ImageHandler.detect_recent_image_placeholders(messages, last_n_user_messages=1)
-                
-                if image_placeholders:
-                    logger.info(f"Detected {len(image_placeholders)} image placeholders - will map to current sandbox files")
-                else:
-                    logger.debug("No image placeholders found in recent messages")
-                
-                if image_placeholders:
-                    logger.info(f"Detected {len(image_placeholders)} image placeholders in messages")
-                    # Resolve placeholders to actual file paths, preferring recently processed images
-                    processed_paths = image_handler.get_image_references_for_prompt(image_mappings) if image_mappings else None
-                    resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders, processed_paths)
+                # Add clear instructions to the prompt about image locations
+                if resolved_placeholders:
+                    valid_images = []
+                    for placeholder, file_path in resolved_placeholders.items():
+                        if not file_path.startswith("[No image"):
+                            valid_images.append((placeholder, file_path))
+                            logger.debug(f"Mapped {placeholder} to {file_path}")
                     
-                    # Add clear instructions to the prompt about image locations
-                    if resolved_placeholders:
-                        valid_images = []
-                        for placeholder, file_path in resolved_placeholders.items():
-                            if not file_path.startswith("[No image"):
-                                valid_images.append((placeholder, file_path))
-                                logger.debug(f"Mapped {placeholder} to {file_path}")
-                        
-                        if valid_images:
-                            # Keep the paths but be clear about the count
-                            num_images = len(valid_images)
-                            if num_images == 1:
-                                placeholder, file_path = valid_images[0]
-                                image_guide = f"EXACTLY 1 image has been referenced ({placeholder}):\n  {file_path}"
-                            else:
-                                image_instructions = [f"EXACTLY {num_images} images have been referenced:"]
-                                for placeholder, file_path in valid_images:
-                                    image_instructions.append(f"  {placeholder} -> {file_path}")
-                                image_guide = "\n".join(image_instructions)
-                            
-                            image_guide += "\n\nAnalyze ONLY the image(s) listed above."
-                            prompt = f"{prompt}\n\n{image_guide}"
-                            logger.info(f"Added paths for EXACTLY {num_images} placeholder(s)")
-                
-                # Handle processed OpenAI-format images
-                if image_mappings:
-                    logger.info(f"Processed {len(image_mappings)} OpenAI-format images, saved to sandbox: {sandbox_dir}")
-                    
-                    # Include image paths in the prompt (needed for Read tool to work)
-                    image_paths = image_handler.get_image_references_for_prompt(image_mappings)
-                    if image_paths:
-                        # Provide paths but with clear count
-                        num_images = len(image_paths)
+                    if valid_images:
+                        # Keep the paths but be clear about the count
+                        num_images = len(valid_images)
                         if num_images == 1:
-                            image_instructions = [f"EXACTLY 1 image has been provided for analysis:"]
-                            image_instructions.append(f"  {image_paths[0]}")
+                            placeholder, file_path = valid_images[0]
+                            image_guide = f"EXACTLY 1 image has been referenced ({placeholder}):\n  {file_path}"
                         else:
-                            image_instructions = [f"EXACTLY {num_images} images have been provided for analysis:"]
-                            for i, path in enumerate(image_paths, 1):
-                                image_instructions.append(f"  Image {i}: {path}")
+                            image_instructions = [f"EXACTLY {num_images} images have been referenced:"]
+                            for placeholder, file_path in valid_images:
+                                image_instructions.append(f"  {placeholder} -> {file_path}")
+                            image_guide = "\n".join(image_instructions)
                         
-                        image_instructions.append("\nAnalyze ONLY the image(s) listed above. Do not reference any other images.")
-                        
-                        image_guide = "\n".join(image_instructions)
+                        image_guide += "\n\nAnalyze ONLY the image(s) listed above."
                         prompt = f"{prompt}\n\n{image_guide}"
-                        logger.info(f"Added paths for EXACTLY {num_images} image(s)")
+                        logger.info(f"Added paths for EXACTLY {num_images} placeholder(s)")
             
-            # Conditionally set allowed tools based on image presence
-            allowed_tools = ChatMode.get_allowed_tools_for_request(messages or [], is_chat_mode)
+            # Handle processed OpenAI-format images
+            if image_mappings:
+                logger.info(f"Processed {len(image_mappings)} OpenAI-format images, saved to sandbox: {sandbox_dir}")
+                
+                # Include image paths in the prompt (needed for Read tool to work)
+                image_paths = image_handler.get_image_references_for_prompt(image_mappings)
+                if image_paths:
+                    # Provide paths but with clear count
+                    num_images = len(image_paths)
+                    if num_images == 1:
+                        image_instructions = [f"EXACTLY 1 image has been provided for analysis:"]
+                        image_instructions.append(f"  {image_paths[0]}")
+                    else:
+                        image_instructions = [f"EXACTLY {num_images} images have been provided for analysis:"]
+                        for i, path in enumerate(image_paths, 1):
+                            image_instructions.append(f"  Image {i}: {path}")
+                    
+                    image_instructions.append("\nAnalyze ONLY the image(s) listed above. Do not reference any other images.")
+                    
+                    image_guide = "\n".join(image_instructions)
+                    prompt = f"{prompt}\n\n{image_guide}"
+                    logger.info(f"Added paths for EXACTLY {num_images} image(s)")
             
-            # Prepare prompt with injections
-            logger.debug(f"Original prompt length: {len(prompt)}")
-            enhanced_prompt = self._prepare_prompt_with_injections(prompt, messages, is_chat_mode)
-            logger.debug(f"Enhanced prompt length: {len(enhanced_prompt)}")
-            if enhanced_prompt != prompt:
-                logger.info(f"Prompt was enhanced with injections (added {len(enhanced_prompt) - len(prompt)} chars)")
-                # Log first and last 500 chars of enhanced prompt
-                if len(enhanced_prompt) > 1000:
-                    logger.debug(f"Enhanced prompt start: {enhanced_prompt[:500]}...")
-                    logger.info(f"Enhanced prompt end: ...{enhanced_prompt[-500:]}")
-                else:
-                    logger.debug(f"Enhanced prompt: {enhanced_prompt}")
+        # Set allowed tools based on image presence
+        allowed_tools = ChatMode.get_allowed_tools_for_request(messages or [])
+        
+        # Prepare prompt with injections
+        logger.debug(f"Original prompt length: {len(prompt)}")
+        enhanced_prompt = self._prepare_prompt_with_injections(prompt, messages)
+        logger.debug(f"Enhanced prompt length: {len(enhanced_prompt)}")
+        if enhanced_prompt != prompt:
+            logger.info(f"Prompt was enhanced with injections (added {len(enhanced_prompt) - len(prompt)} chars)")
+            # Log first and last 500 chars of enhanced prompt
+            if len(enhanced_prompt) > 1000:
+                logger.debug(f"Enhanced prompt start: {enhanced_prompt[:500]}...")
+                logger.info(f"Enhanced prompt end: ...{enhanced_prompt[-500:]}")
+            else:
+                logger.debug(f"Enhanced prompt: {enhanced_prompt}")
             
             # Log the complete SDK options
             logger.info("=== SDK OPTIONS ===")
@@ -402,18 +394,13 @@ class ClaudeCodeCLI:
             logger.info(f"continue_session: {continue_session}")
             logger.info("=== END SDK OPTIONS ===")
             
-            # Verify XML enforcement is present if expected
-            xml_check_required, _, _ = self.xml_detector.detect(prompt, messages)
-            if xml_check_required:
-                if "CRITICAL - THIS IS MANDATORY" in enhanced_prompt or "FAILSAFE XML ENFORCEMENT" in enhanced_prompt:
-                    logger.info("✓ XML enforcement successfully added to prompt")
-                else:
-                    logger.error("✗ XML enforcement NOT found in enhanced prompt despite deterministic detection!")
-            
-        else:
-            # Normal mode
-            cwd = self.cwd
-            enhanced_prompt = prompt
+        # Verify XML enforcement is present if expected
+        xml_check_required, _, _ = self.xml_detector.detect(prompt, messages)
+        if xml_check_required:
+            if "CRITICAL - THIS IS MANDATORY" in enhanced_prompt or "FAILSAFE XML ENFORCEMENT" in enhanced_prompt:
+                logger.info("✓ XML enforcement successfully added to prompt")
+            else:
+                logger.error("✗ XML enforcement NOT found in enhanced prompt despite deterministic detection!")
         
         try:
             # Set authentication environment variables (if any)
@@ -424,222 +411,91 @@ class ClaudeCodeCLI:
                     os.environ[key] = value
             
             try:
-                # Execute in chat mode without environment sanitization
+                # Execute with sandbox isolation
                 # The SDK needs auth env vars, but execution is still sandboxed via cwd
-                if is_chat_mode:
-                    # Build SDK options with sandbox
-                    options = ClaudeCodeOptions(
-                        max_turns=max_turns,
-                        cwd=cwd  # This provides the file system isolation
-                    )
+                # Build SDK options with sandbox
+                options = ClaudeCodeOptions(
+                    max_turns=max_turns,
+                    cwd=cwd  # This provides the file system isolation
+                )
                     
-                    # Set model if specified
-                    if model:
-                        options.model = model
-                        
-                    # Set system prompt if specified
-                    if system_prompt:
-                        options.system_prompt = system_prompt
-                        
-                    # Set tool restrictions
-                    options.allowed_tools = allowed_tools
+                # Set model if specified
+                if model:
+                    options.model = model
                     
-                    # Force disable session features in chat mode
-                    options.continue_session = False
-                    options.resume = None
+                # Set system prompt if specified
+                if system_prompt:
+                    options.system_prompt = system_prompt
                     
-                    # Run the query and yield messages
-                    logger.info(f"Executing query with enhanced prompt in chat mode")
-                    logger.info(f"SDK options: sandbox_dir={options.cwd}, max_turns={options.max_turns}")
-                    logger.info(f"Allowed tools: {options.allowed_tools}")
-                    logger.info(f"Model: {options.model}")
-                    logger.info(f"System prompt set: {bool(options.system_prompt)}")
+                # Set tool restrictions
+                options.allowed_tools = allowed_tools
+                
+                # Force disable session features for stateless operation
+                options.continue_session = False
+                options.resume = None
+                
+                # Run the query and yield messages
+                logger.info(f"Executing query with enhanced prompt")
+                logger.info(f"SDK options: sandbox_dir={options.cwd}, max_turns={options.max_turns}")
+                logger.info(f"Allowed tools: {options.allowed_tools}")
+                logger.info(f"Model: {options.model}")
+                logger.info(f"System prompt set: {bool(options.system_prompt)}")
+                
+                # Log critical SDK environment state
+                logger.info("=== SDK EXECUTION STARTING ===")
+                logger.info(f"Allowed tools: {allowed_tools}")
+                logger.info(f"Options allowed_tools: {options.allowed_tools}")
                     
-                    # Log critical SDK environment state
-                    logger.info("=== SDK EXECUTION STARTING ===")
-                    logger.info(f"Chat mode allowed tools: {allowed_tools}")
-                    logger.info(f"Options allowed_tools: {options.allowed_tools}")
-                    
-                    
-                    try:
-                        total_content_length = 0
-                        sdk_message_count = 0
-                        
-                        
-                        async for message in query(prompt=enhanced_prompt, options=options):
-                            sdk_message_count += 1
-                            processed_msg = self._process_message(message)
-                            msg_type = processed_msg.get('type')
-                            msg_subtype = processed_msg.get('subtype')
-                            logger.debug(f"SDK message #{sdk_message_count} type: {msg_type}, subtype: {msg_subtype}")
-                            
-                            # Additional logging for assistant messages to track sequencing
-                            if msg_type == "assistant":
-                                logger.info(f"Assistant message #{sdk_message_count} detected in SDK stream")
-                            # Log assistant responses with content length tracking
-                            if processed_msg.get("type") == "assistant" or "content" in processed_msg:
-                                content = processed_msg.get("content", [])
-                                if isinstance(content, list):
-                                    for block in content:
-                                        if hasattr(block, 'text'):
-                                            block_length = len(block.text)
-                                            total_content_length += block_length
-                                            logger.debug(f"Assistant text block length: {block_length}, total so far: {total_content_length}")
-                                        elif isinstance(block, dict) and block.get("type") == "text":
-                                            block_length = len(block.get("text", ""))
-                                            total_content_length += block_length
-                                            logger.debug(f"Assistant text block length: {block_length}, total so far: {total_content_length}")
-                                elif isinstance(content, str):
-                                    content_length = len(content)
-                                    total_content_length += content_length
-                                    logger.debug(f"Assistant content length: {content_length}, total so far: {total_content_length}")
-                                logger.debug(f"Assistant message type: {processed_msg.get('type')}, has content: {'content' in processed_msg}")
-                            # Log completion summary
-                            if processed_msg.get("subtype") == "success":
-                                logger.info(f"Response completed - Total content length: {total_content_length} characters")
-                            yield processed_msg
-                        
-                        logger.info(f"SDK stream ended normally after {sdk_message_count} messages, total content: {total_content_length} chars")
-                        logger.info("=== SDK EXECUTION COMPLETED ===")
-                    except Exception as sdk_error:
-                        # Handle SDK errors gracefully
-                        if "cancel scope" in str(sdk_error).lower():
-                            logger.warning(f"SDK cancel scope issue detected (will continue): {sdk_error}")
-                            # Don't propagate cancel scope errors - they're internal to SDK
-                        else:
-                            logger.error(f"SDK error during streaming: {sdk_error}")
-                            logger.error("SDK error traceback:", exc_info=True)
-                            logger.error("=== SDK EXECUTION FAILED ===")
-                            raise
-                else:
-                    # Normal mode - use default working directory
-                    cwd = self.cwd
-                    
-                    # Process images if present in messages (normal mode)
-                    image_handler = None
-                    image_mappings = {}
-                    image_placeholders = {}
-                    
-                    if messages:
-                        # Initialize image handler
-                        # In normal mode, save to temp directory or current directory
-                        image_handler = ImageHandler(sandbox_dir=cwd)
-                        
-                        # Always process OpenAI-format images
-                        image_mappings = image_handler.process_messages_for_images(messages)
-                        
-                        # Always check for placeholders to provide current file paths
-                        image_placeholders = ImageHandler.detect_recent_image_placeholders(messages, last_n_user_messages=1)
-                        
-                        if image_placeholders:
-                            logger.info(f"Detected {len(image_placeholders)} image placeholders in normal mode - mapping to current files")
-                        else:
-                            logger.debug("No image placeholders found in recent messages (normal mode)")
-                        
-                        if image_placeholders:
-                            logger.info(f"Detected {len(image_placeholders)} image placeholders in normal mode")
-                            # Resolve placeholders to actual file paths, preferring recently processed images
-                            processed_paths = image_handler.get_image_references_for_prompt(image_mappings) if image_mappings else None
-                            resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders, processed_paths)
-                            
-                            # Add instructions about image locations
-                            if resolved_placeholders:
-                                image_instructions = ["Image files are available:"]
-                                for placeholder, file_path in resolved_placeholders.items():
-                                    if not file_path.startswith("[No image"):
-                                        image_instructions.append(f"  {placeholder} -> {file_path}")
-                                        logger.debug(f"Mapped {placeholder} to {file_path}")
-                                
-                                if len(image_instructions) > 1:
-                                    image_guide = "\n".join(image_instructions)
-                                    image_guide += "\n\nUse the Read tool with these file paths to view the images."
-                                    prompt = f"{prompt}\n\n{image_guide}"
-                                    logger.info(f"Added image location guide for {len(resolved_placeholders)} placeholders")
-                        
-                        if image_mappings:
-                            logger.info(f"Processed {len(image_mappings)} OpenAI-format images in normal mode")
-                            
-                            # Include image paths in the prompt with explicit instructions
-                            image_paths = image_handler.get_image_references_for_prompt(image_mappings)
-                            if image_paths:
-                                # Create clear instructions for Claude
-                                image_instructions = ["IMPORTANT: Images are available for analysis. You MUST use the Read tool to view them:"]
-                                for i, path in enumerate(image_paths, 1):
-                                    image_instructions.append(f"  Image {i}: {path}")
-                                
-                                image_instructions.append("\nYou MUST use the Read tool with these exact file paths to see the images.")
-                                image_instructions.append("Do NOT use any other tools to analyze the images - only the Read tool works.")
-                                
-                                image_guide = "\n".join(image_instructions)
-                                prompt = f"{prompt}\n\n{image_guide}"
-                                logger.info(f"Added explicit Read tool instructions for {len(image_paths)} images in normal mode")
-                    
-                    # Normal mode - no prompt injection for standard requests
-                    enhanced_prompt = prompt
-                    
-                    options = ClaudeCodeOptions(
-                        max_turns=max_turns,
-                        cwd=cwd
-                    )
-                    
-                    # Set model if specified
-                    if model:
-                        options.model = model
-                        
-                    # Set system prompt if specified
-                    if system_prompt:
-                        options.system_prompt = system_prompt
-                        
-                    # Set tool restrictions
-                    if allowed_tools:
-                        options.allowed_tools = allowed_tools
-                    if disallowed_tools:
-                        options.disallowed_tools = disallowed_tools
-                        
-                    # Handle session continuity
-                    if continue_session:
-                        options.continue_session = True
-                    elif session_id:
-                        options.resume = session_id
-                    
-                    # Run the query and yield messages
+                
+                try:
                     total_content_length = 0
                     sdk_message_count = 0
-                    logger.info("Starting SDK query with enhanced prompt")
-                    logger.debug(f"Options object: {options}")
                     
-                    try:
-                        async for message in query(prompt=enhanced_prompt, options=options):
-                            sdk_message_count += 1
-                            logger.debug(f"SDK message #{sdk_message_count} received from query")
-                            
-                            processed_msg = self._process_message(message)
-                            
-                            # Log message type and subtype
-                            msg_type = processed_msg.get("type", "unknown")
-                            msg_subtype = processed_msg.get("subtype", "unknown")
-                            logger.debug(f"Processed message type: {msg_type}, subtype: {msg_subtype}")
-                            
-                            # Track content length in normal mode too
-                            if processed_msg.get("type") == "assistant" or "content" in processed_msg:
-                                content = processed_msg.get("content", [])
-                                if isinstance(content, list):
-                                    for block in content:
-                                        if hasattr(block, 'text'):
-                                            total_content_length += len(block.text)
-                                        elif isinstance(block, dict) and block.get("type") == "text":
-                                            total_content_length += len(block.get("text", ""))
-                                elif isinstance(content, str):
-                                    total_content_length += len(content)
-                            # Log completion summary
-                            if processed_msg.get("subtype") == "success":
-                                logger.info(f"Response completed - Total content length: {total_content_length} characters")
-                            yield processed_msg
+                    
+                    async for message in query(prompt=enhanced_prompt, options=options):
+                        sdk_message_count += 1
+                        processed_msg = self._process_message(message)
+                        msg_type = processed_msg.get('type')
+                        msg_subtype = processed_msg.get('subtype')
+                        logger.debug(f"SDK message #{sdk_message_count} type: {msg_type}, subtype: {msg_subtype}")
                         
-                        logger.info(f"SDK query generator completed after {sdk_message_count} messages")
-                    except Exception as query_error:
-                        logger.error(f"Exception during SDK query: {type(query_error).__name__}: {query_error}")
-                        logger.error("Query error traceback:", exc_info=True)
+                        # Additional logging for assistant messages to track sequencing
+                        if msg_type == "assistant":
+                            logger.info(f"Assistant message #{sdk_message_count} detected in SDK stream")
+                        # Log assistant responses with content length tracking
+                        if processed_msg.get("type") == "assistant" or "content" in processed_msg:
+                            content = processed_msg.get("content", [])
+                            if isinstance(content, list):
+                                for block in content:
+                                    if hasattr(block, 'text'):
+                                        block_length = len(block.text)
+                                        total_content_length += block_length
+                                        logger.debug(f"Assistant text block length: {block_length}, total so far: {total_content_length}")
+                                    elif isinstance(block, dict) and block.get("type") == "text":
+                                        block_length = len(block.get("text", ""))
+                                        total_content_length += block_length
+                                        logger.debug(f"Assistant text block length: {block_length}, total so far: {total_content_length}")
+                            elif isinstance(content, str):
+                                content_length = len(content)
+                                total_content_length += content_length
+                                logger.debug(f"Assistant content length: {content_length}, total so far: {total_content_length}")
+                            logger.debug(f"Assistant message type: {processed_msg.get('type')}, has content: {'content' in processed_msg}")
+                        # Log completion summary
+                        if processed_msg.get("subtype") == "success":
+                            logger.info(f"Response completed - Total content length: {total_content_length} characters")
+                        yield processed_msg
+                    
+                    logger.info(f"SDK stream ended normally after {sdk_message_count} messages, total content: {total_content_length} chars")
+                    logger.info("=== SDK EXECUTION COMPLETED ===")
+                except Exception as sdk_error:
+                    # Handle SDK errors gracefully
+                    if "cancel scope" in str(sdk_error).lower():
+                        logger.warning(f"SDK cancel scope issue detected (will continue): {sdk_error}")
+                        # Don't propagate cancel scope errors - they're internal to SDK
+                    else:
+                        logger.error(f"SDK error during streaming: {sdk_error}")
+                        logger.error("SDK error traceback:", exc_info=True)
+                        logger.error("=== SDK EXECUTION FAILED ===")
                         raise
                     
             finally:
@@ -792,5 +648,5 @@ class ClaudeCodeCLI:
         return metadata
     
     def get_last_session_id(self) -> Optional[str]:
-        """Get the last tracked session ID (only available in chat mode)."""
+        """Get the last tracked session ID."""
         return self.last_session_id

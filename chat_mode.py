@@ -27,19 +27,16 @@ class ChatMode:
         return ["WebSearch", "WebFetch"]
     
     @staticmethod
-    def get_allowed_tools_for_request(messages: List[Dict[str, Any]], is_chat_mode: bool) -> Optional[List[str]]:
+    def get_allowed_tools_for_request(messages: List[Dict[str, Any]]) -> List[str]:
         """
-        Conditionally determine allowed tools based on message content.
+        Determine allowed tools based on message content.
         
         Args:
             messages: List of message dictionaries from the request
-            is_chat_mode: Whether chat mode is active
             
         Returns:
-            List of allowed tools if in chat mode, None otherwise (no restrictions)
+            List of allowed tools based on message content
         """
-        if not is_chat_mode:
-            return None  # No tool restrictions in normal mode
         
         # Start with base chat mode tools
         base_tools = ["WebSearch", "WebFetch"]
@@ -145,17 +142,14 @@ def sanitized_environment():
             logger.debug(f"Restored environment variable: {var}")
 
 
-def get_chat_mode_info(is_chat_mode: bool = False) -> Dict[str, Any]:
+def get_chat_mode_info() -> Dict[str, Any]:
     """Get current chat mode configuration and status.
     
-    Args:
-        is_chat_mode: Whether chat mode is currently active for the request
-        
     Returns:
         Dict containing chat mode configuration
     """
     return {
-        "enabled": is_chat_mode,
+        "enabled": True,
         "allowed_tools": ChatMode.get_allowed_tools(),
         "sandbox_enabled": True,
         "sessions_disabled": True,

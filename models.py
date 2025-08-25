@@ -116,8 +116,6 @@ class ChatCompletionRequest(BaseModel):
     frequency_penalty: Optional[float] = Field(default=0, ge=-2, le=2)
     logit_bias: Optional[Dict[str, float]] = None
     user: Optional[str] = None
-    session_id: Optional[str] = Field(default=None, description="Optional session ID for conversation continuity")
-    enable_tools: Optional[bool] = Field(default=False, description="Enable Claude Code tools (Read, Write, Bash, etc.) - disabled by default for OpenAI compatibility")
     
     @field_validator('n')
     @classmethod
@@ -221,14 +219,3 @@ class ErrorResponse(BaseModel):
     error: ErrorDetail
 
 
-class SessionInfo(BaseModel):
-    session_id: str
-    created_at: datetime
-    last_accessed: datetime
-    message_count: int
-    expires_at: datetime
-
-
-class SessionListResponse(BaseModel):
-    sessions: List[SessionInfo]
-    total: int

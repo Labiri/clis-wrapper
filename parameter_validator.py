@@ -33,7 +33,7 @@ class ParameterValidator:
             bool: True if the base model is supported
         """
         # Extract base model for validation
-        base_model, _, _ = ModelUtils.parse_model_and_mode(model)
+        base_model, _ = ModelUtils.extract_progress_flag(model)
         
         supported_models = cls.get_supported_models()
         if base_model not in supported_models:
