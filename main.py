@@ -25,9 +25,7 @@ from models import (
     Usage,
     StreamChoice,
     ErrorResponse,
-    ErrorDetail,
-    SessionInfo,
-    SessionListResponse
+    ErrorDetail
 )
 from claude_cli import ClaudeCodeCLI
 from gemini_cli import GeminiCLI
@@ -1879,40 +1877,28 @@ async def list_models(
     
     # Add Claude models
     for base_model in sorted(claude_models):
-        # Add base model (normal mode)
+        # Add base model
         models_data.append({
             "id": base_model,
             "object": "model",
             "owned_by": "anthropic"
         })
-        # Add chat variant (without progress markers)
+        # Add progress variant (with progress markers)
         models_data.append({
-            "id": ModelUtils.create_chat_variant(base_model),
-            "object": "model",
-            "owned_by": "anthropic"
-        })
-        # Add chat-progress variant (with progress markers)
-        models_data.append({
-            "id": ModelUtils.create_chat_progress_variant(base_model),
+            "id": f"{base_model}-progress",
             "object": "model",
             "owned_by": "anthropic"
         })
     
     # Add Gemini models
     for base_model in sorted(gemini_models):
-        # Add base model (normal mode)
+        # Add base model
         models_data.append({
             "id": base_model,
             "object": "model",
             "owned_by": "google"
         })
-        # Add chat variant (Gemini already streams natively, no need for chat-progress)
-        models_data.append({
-            "id": ModelUtils.create_chat_variant(base_model),
-            "object": "model",
-            "owned_by": "google"
-        })
-        # Note: No chat-progress variant for Gemini as it already streams natively
+        # Note: No progress variant for Gemini as it already streams natively
     
     return {
         "object": "list",

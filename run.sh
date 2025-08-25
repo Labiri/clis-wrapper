@@ -4,9 +4,9 @@
 # Supports debug mode with comprehensive logging to debug.log
 
 # Default values
-DEBUG_MODE=false
-VERBOSE=false
-PORT=8000
+DEBUG_MODE=true
+VERBOSE=true
+PORT=8005
 LOG_FILE="debug.log"
 SHOW_HELP=false
 
@@ -103,35 +103,18 @@ fi
 
 # Check if .env file exists
 if [ -f .env ]; then
-    log_message "INFO" "Loading environment from .env file"
-    # Export variables from .env file (skip comments and empty lines)
-    set -a
-    while IFS='=' read -r key value; do
-        # Skip comments and empty lines
-        if [[ ! "$key" =~ ^[[:space:]]*# ]] && [[ -n "$key" ]]; then
-            # Remove leading/trailing whitespace and quotes
-            key=$(echo "$key" | xargs)
-            value=$(echo "$value" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
-            export "$key=$value"
-            if [ "$DEBUG_MODE" = true ]; then
-                # Mask sensitive values in logs
-                if [[ "$key" == *"KEY"* ]] || [[ "$key" == *"TOKEN"* ]] || [[ "$key" == *"SECRET"* ]]; then
-                    log_message "DEBUG" "Loaded env var: $key=***MASKED***"
-                else
-                    log_message "DEBUG" "Loaded env var: $key=$value"
-                fi
-            fi
-        fi
-    done < .env
-    set +a
+    log_message "INFO" ".env file found - Poetry will load it automatically"
 else
     log_message "WARN" ".env file not found - using system environment variables"
 fi
 
-# Override with command line arguments
+# Override with command line arguments (these take precedence over .env)
 export DEBUG_MODE=$DEBUG_MODE
 export VERBOSE=$VERBOSE
-export PORT=$PORT
+# Don't override PORT from command line if using .env
+if [ "$PORT" != "8000" ]; then
+    export PORT=$PORT
+fi
 
 log_message "INFO" "Configuration:"
 log_message "INFO" "  - Port: $PORT"
