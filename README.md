@@ -1,5 +1,11 @@
 # Multi-AI CLI OpenAI API Wrapper
 
+> ⚠️ **WARNING: Active Refactoring in Progress**
+> 
+> This repository is currently undergoing significant refactoring and architectural changes. The codebase is **NOT STABLE** at this time. Features may be broken, APIs may change without notice, and documentation may not reflect the current state of the code.
+> 
+> **Use at your own risk.** We recommend waiting for the refactoring to complete before using this in production environments.
+
 A unified OpenAI API-compatible endpoint for multiple AI CLIs, currently supporting **Anthropic Claude** and **Google Gemini**. The quickest and easiest way to leverage multiple AI providers through a single, standardized API interface.
 
 ## Attribution & History
