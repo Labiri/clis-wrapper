@@ -245,9 +245,33 @@ class MessageAdapter:
     @staticmethod
     def validate_xml_tool_response(content: str) -> bool:
         """Check if content contains valid XML tool tags."""
+        import re
+        
+        # Check for ANY XML tool-like tags (not just specific ones)
+        # This regex looks for opening XML tags that look like tools
+        # (lowercase words, possibly with underscores)
+        tool_pattern = r'<([a-z][a-z_]*[a-z]|[a-z])>'
+        
+        # Also check for common tool tags we know about
         content_lower = content.lower()
-        return any([
-            "<attempt_completion>" in content_lower,
-            "<ask_followup_question>" in content_lower,
-            "<new_task>" in content_lower
-        ])
+        known_tools = [
+            "<attempt_completion>",
+            "<ask_followup_question>",
+            "<new_task>",
+            "<read_file>",
+            "<write_to_file>",
+            "<search_files>",
+            "<list_files>",
+            "<apply_diff>",
+            "<execute_command>",
+            "<switch_mode>",
+            "<update_todo_list>"
+        ]
+        
+        # Check if any known tools are present
+        has_known_tool = any(tool in content_lower for tool in known_tools)
+        
+        # Or check if there's any XML-like tool structure
+        has_xml_structure = bool(re.search(tool_pattern, content))
+        
+        return has_known_tool or has_xml_structure

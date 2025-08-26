@@ -31,6 +31,7 @@ from claude_cli import ClaudeCodeCLI
 from gemini_cli import GeminiCLI
 from message_adapter import MessageAdapter
 from gemini_message_adapter import GeminiMessageAdapter
+from image_analysis_orchestrator import ImageAnalysisOrchestrator
 from auth import verify_api_key, security, validate_claude_code_auth, get_claude_code_auth_info
 from parameter_validator import ParameterValidator, CompatibilityReporter
 from rate_limiter import limiter, rate_limit_exceeded_handler, get_rate_limit_for_endpoint, rate_limit_endpoint
@@ -1697,6 +1698,28 @@ async def chat_completions(
             logger.info(f"Chat mode with progress markers activated for {base_model} (provider: {provider})")
         else:
             logger.info(f"Chat mode activated for {base_model} (provider: {provider})")
+        
+        # Process images if present (applies to all providers)
+        image_orchestrator = ImageAnalysisOrchestrator(
+            claude_cli_path=os.getenv('CLAUDE_CLI_PATH', 'claude'),
+            gemini_cli_path=os.getenv('GEMINI_CLI_PATH', 'gemini'),
+            verbose=VERBOSE
+        )
+        
+        # Convert messages to dict format for analysis
+        messages_dict = [msg.dict() for msg in request_body.messages]
+        
+        # Check for images and analyze if present
+        has_images, image_analysis, modified_messages = image_orchestrator.analyze_images_if_present(
+            messages_dict,
+            base_model,
+            messages_dict[-1].get('content') if messages_dict else None
+        )
+        
+        if has_images and image_analysis:
+            logger.info(f"Analyzed images successfully, injecting context into messages")
+            # Update request body with modified messages
+            request_body.messages = [Message(**msg) for msg in modified_messages]
         
         # Handle Gemini models separately
         if provider == "gemini":

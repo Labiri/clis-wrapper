@@ -99,10 +99,42 @@ class ImageHandler:
         # Get only new messages to process
         new_messages = self._get_new_messages(messages)
         
+        # SPECIAL CASE: If we have NO new user messages with images but the conversation
+        # references images (e.g., retry scenario), check ALL user messages for images
+        # This handles the case where a client retries and the image is in message history
+        new_user_messages = [m for m in new_messages if m.get('role') == 'user']
+        
+        # Check if new messages have images
+        has_new_images = False
+        for msg in new_user_messages:
+            content = msg.get('content', '')
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get('type') == 'image_url':
+                        has_new_images = True
+                        break
+            if has_new_images:
+                break
+        
+        # If no new images but conversation might reference images, check all user messages
+        if not has_new_images and len(messages) > len(new_messages):
+            logger.info("No images in new messages, checking entire conversation for retry scenario")
+            # Check if ANY user message in the conversation has images
+            all_user_messages = [m for m in messages if m.get('role') == 'user']
+            for msg in all_user_messages:
+                content = msg.get('content', '')
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get('type') == 'image_url':
+                            # Found images in history - process ALL user messages
+                            logger.info("Found images in conversation history - processing all user messages for retry scenario")
+                            new_messages = messages
+                            break
+        
         # Filter to only user messages (ignore assistant/system/tool messages)
         user_messages = [m for m in new_messages if m.get('role') == 'user']
         
-        logger.info(f"Processing images from {len(user_messages)} new user messages (out of {len(messages)} total)")
+        logger.info(f"Processing images from {len(user_messages)} user messages (out of {len(messages)} total)")
         
         image_mappings = {}
         total_images = 0

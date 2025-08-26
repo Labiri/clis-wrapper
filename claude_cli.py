@@ -12,9 +12,6 @@ from chat_mode import ChatMode
 from prompts import ChatModePrompts, FormatDetector, inject_prompts
 from xml_detector import DeterministicXMLDetector
 
-# Import image handling
-from image_handler import ImageHandler
-
 logger = logging.getLogger(__name__)
 
 # Pre-compiled regex patterns for performance
@@ -292,80 +289,9 @@ class ClaudeCodeCLI:
         sandbox_dir = ChatMode.create_sandbox()
         cwd = Path(sandbox_dir)
         
-        # Process images if present in messages
-        image_handler = None
-        image_mappings = {}
-        image_placeholders = {}
-        
-        if messages:
-            # Initialize image handler with sandbox directory
-            image_handler = ImageHandler(sandbox_dir=cwd)
-            
-            # Always process OpenAI-format images (base64/URLs) when present
-            image_mappings = image_handler.process_messages_for_images(messages)
-            
-            # Always check for file-based image placeholders to provide current paths
-            # Note: We always process placeholders because each request gets a new sandbox
-            # with new file paths, even if the conversation mentions the same [Image #1]
-            image_placeholders = ImageHandler.detect_recent_image_placeholders(messages, last_n_user_messages=1)
-            
-            if image_placeholders:
-                logger.info(f"Detected {len(image_placeholders)} image placeholders - will map to current sandbox files")
-            else:
-                logger.debug("No image placeholders found in recent messages")
-            
-            if image_placeholders:
-                logger.info(f"Detected {len(image_placeholders)} image placeholders in messages")
-                # Resolve placeholders to actual file paths, preferring recently processed images
-                processed_paths = image_handler.get_image_references_for_prompt(image_mappings) if image_mappings else None
-                resolved_placeholders = image_handler.resolve_image_placeholders(image_placeholders, processed_paths)
-                
-                # Add clear instructions to the prompt about image locations
-                if resolved_placeholders:
-                    valid_images = []
-                    for placeholder, file_path in resolved_placeholders.items():
-                        if not file_path.startswith("[No image"):
-                            valid_images.append((placeholder, file_path))
-                            logger.debug(f"Mapped {placeholder} to {file_path}")
-                    
-                    if valid_images:
-                        # Keep the paths but be clear about the count
-                        num_images = len(valid_images)
-                        if num_images == 1:
-                            placeholder, file_path = valid_images[0]
-                            image_guide = f"EXACTLY 1 image has been referenced ({placeholder}):\n  {file_path}"
-                        else:
-                            image_instructions = [f"EXACTLY {num_images} images have been referenced:"]
-                            for placeholder, file_path in valid_images:
-                                image_instructions.append(f"  {placeholder} -> {file_path}")
-                            image_guide = "\n".join(image_instructions)
-                        
-                        image_guide += "\n\nAnalyze ONLY the image(s) listed above."
-                        prompt = f"{prompt}\n\n{image_guide}"
-                        logger.info(f"Added paths for EXACTLY {num_images} placeholder(s)")
-            
-            # Handle processed OpenAI-format images
-            if image_mappings:
-                logger.info(f"Processed {len(image_mappings)} OpenAI-format images, saved to sandbox: {sandbox_dir}")
-                
-                # Include image paths in the prompt (needed for Read tool to work)
-                image_paths = image_handler.get_image_references_for_prompt(image_mappings)
-                if image_paths:
-                    # Provide paths but with clear count
-                    num_images = len(image_paths)
-                    if num_images == 1:
-                        image_instructions = [f"EXACTLY 1 image has been provided for analysis:"]
-                        image_instructions.append(f"  {image_paths[0]}")
-                    else:
-                        image_instructions = [f"EXACTLY {num_images} images have been provided for analysis:"]
-                        for i, path in enumerate(image_paths, 1):
-                            image_instructions.append(f"  Image {i}: {path}")
-                    
-                    image_instructions.append("\nAnalyze ONLY the image(s) listed above. Do not reference any other images.")
-                    
-                    image_guide = "\n".join(image_instructions)
-                    prompt = f"{prompt}\n\n{image_guide}"
-                    logger.info(f"Added paths for EXACTLY {num_images} image(s)")
+        # Note: Image processing is now handled by ImageAnalysisOrchestrator
+        # Images are analyzed in a separate CLI call with tools enabled
+        # The analysis is then injected as context into the messages
             
         # Set allowed tools based on image presence
         allowed_tools = ChatMode.get_allowed_tools_for_request(messages or [])
