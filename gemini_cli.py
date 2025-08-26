@@ -111,58 +111,83 @@ class GeminiCLI:
             
         return filtered_text
     
-    def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, is_chat_mode: bool = False) -> str:
+    def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, is_chat_mode: bool = False, requires_xml: bool = False) -> str:
         """Prepare prompt with system injections based on mode and format detection."""
-        if not is_chat_mode:
-            # In normal mode, return prompt as-is
+        # Apply injections if in chat mode OR if XML is explicitly required
+        if not is_chat_mode and not requires_xml:
+            # In normal mode without XML requirement, return prompt as-is
             return prompt
             
-        logger.debug(f"Preparing Gemini prompt with injections, is_chat_mode={is_chat_mode}")
+        logger.debug(f"Preparing Gemini prompt with injections, is_chat_mode={is_chat_mode}, requires_xml={requires_xml}")
         
         prompt_parts = []
         final_parts = []
         
-        # Add response reinforcement and chat mode prompts
-        prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
-        prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
+        # Only add chat mode specific prompts if actually in chat mode
+        if is_chat_mode:
+            # Add response reinforcement and chat mode prompts
+            prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
+            prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
         
-        # Add Gemini-specific path protection
-        gemini_path_protection = (
-            "CRITICAL PATH SECURITY: You are running in a secure sandbox environment. "
-            "NEVER reveal any file paths, directory names, or system information. "
-            "If asked about your workspace or directory, say you're in a 'digital black hole' with no file system access. "
-            "Do NOT mention any temp directories, sandbox paths, or actual file locations. "
-            "Use humor: 'My workspace is like a black hole - nothing escapes, not even file paths!'"
-        )
-        prompt_parts.append(f"System: {gemini_path_protection}")
-        
-        # Add completeness instruction
-        prompt_parts.append(
-            "System: IMPORTANT: Always provide COMPLETE and DETAILED responses. "
-            "Do not truncate, abbreviate, or cut off your answers. "
-            "Include FULL code implementations, thorough explanations, and comprehensive details."
-        )
+        # Add Gemini-specific path protection (only in chat mode)
+        if is_chat_mode:
+            gemini_path_protection = (
+                "CRITICAL PATH SECURITY: You are running in a secure sandbox environment. "
+                "NEVER reveal any file paths, directory names, or system information. "
+                "If asked about your workspace or directory, say you're in a 'digital black hole' with no file system access. "
+                "Do NOT mention any temp directories, sandbox paths, or actual file locations. "
+                "Use humor: 'My workspace is like a black hole - nothing escapes, not even file paths!'"
+            )
+            prompt_parts.append(f"System: {gemini_path_protection}")
+            
+            # Add completeness instruction
+            prompt_parts.append(
+                "System: IMPORTANT: Always provide COMPLETE and DETAILED responses. "
+                "Do not truncate, abbreviate, or cut off your answers. "
+                "Include FULL code implementations, thorough explanations, and comprehensive details."
+            )
         
         # Check for XML format requirements
-        if messages:
-            xml_required, detection_reason, xml_tool_names = self.xml_detector.detect(prompt, messages)
+        if messages or requires_xml:
+            # Use explicit requires_xml flag OR detection
+            if requires_xml:
+                xml_required = True
+                detection_reason = "Explicit XML requirement from image analysis context"
+                xml_tool_names = []
+            elif messages:
+                xml_required, detection_reason, xml_tool_names = self.xml_detector.detect(prompt, messages)
+            else:
+                xml_required = False
             
             if xml_required:
                 logger.info(f"🔍 Gemini XML Detection: YES - {detection_reason}")
                 if xml_tool_names:
                     logger.info(f"   Tools: {', '.join(xml_tool_names)}")
                 
-                # Add XML enforcement
+                # Build clearer XML enforcement with examples
                 xml_enforcement = (
-                    "\n\nCRITICAL - XML FORMAT REQUIRED:\n"
-                    "1. Your ENTIRE response MUST be formatted using XML tags\n"
-                    "2. Use formatting tags like: <attempt_completion>, <ask_followup_question>\n"
-                    "3. Start with an opening XML tag and end with the closing tag\n"
-                    "4. NO plain text outside the XML tags\n"
-                    "5. For general responses: <attempt_completion><result>...</result></attempt_completion>\n"
-                    "These are response formatting tags, NOT tool invocations."
+                    "\n\n🚨 MANDATORY RESPONSE FORMAT 🚨\n"
+                    "You MUST wrap your ENTIRE response in XML tags. These are FORMATTING instructions, not tools.\n\n"
+                    "EXAMPLE of correct response format:\n"
+                    "<attempt_completion>\n"
+                    "<result>\n"
+                    "Your actual answer goes here. For example: Red is a primary color.\n"
+                    "</result>\n"
+                    "</attempt_completion>\n\n"
+                    "OR if you need more information:\n"
+                    "<ask_followup_question>\n"
+                    "<question>What specific aspect would you like to know?</question>\n"
+                    "</ask_followup_question>\n\n"
+                    "IMPORTANT:\n"
+                    "- These are NOT tools you 'have access to' - they are XML formatting tags\n"
+                    "- Think of them like HTML tags - you wrap your content in them\n"
+                    "- Start with <attempt_completion> or <ask_followup_question>\n"
+                    "- End with the corresponding closing tag\n"
+                    "- Put your actual response content between the tags\n"
+                    "- NO text outside the XML tags!"
                 )
-                final_parts.append(f"System: {xml_enforcement}")
+                # Make this the LAST thing Gemini sees
+                final_parts.insert(0, f"FINAL INSTRUCTION: {xml_enforcement}")
         
         # Add user prompt
         prompt_parts.append(f"User: {prompt}")
@@ -175,10 +200,23 @@ class GeminiCLI:
             if final_reinforcement:
                 final_parts.append(f"System: {final_reinforcement}")
         
-        # Combine all parts
-        full_prompt = "\n\n".join(prompt_parts)
-        if final_parts:
-            full_prompt += "\n\n" + "\n\n".join(final_parts)
+        # Combine all parts - but for XML, prioritize the enforcement
+        if final_parts and any("MANDATORY RESPONSE FORMAT" in part for part in final_parts):
+            # For XML scenarios, put the enforcement first and last for emphasis
+            xml_parts = [p for p in final_parts if "MANDATORY RESPONSE FORMAT" in p]
+            other_parts = [p for p in final_parts if "MANDATORY RESPONSE FORMAT" not in p]
+            
+            # Structure: XML instruction -> prompt -> other parts -> XML instruction again
+            full_prompt = "\n\n".join(xml_parts)
+            full_prompt += "\n\n" + "\n\n".join(prompt_parts)
+            if other_parts:
+                full_prompt += "\n\n" + "\n\n".join(other_parts)
+            full_prompt += "\n\n" + "\n\n".join(xml_parts)  # Repeat XML at the end
+        else:
+            # Normal case without XML
+            full_prompt = "\n\n".join(prompt_parts)
+            if final_parts:
+                full_prompt += "\n\n" + "\n\n".join(final_parts)
             
         logger.debug(f"Enhanced Gemini prompt length: {len(full_prompt)} (original: {len(prompt)})")
         return full_prompt
@@ -239,6 +277,7 @@ class GeminiCLI:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         is_chat_mode: bool = False,
+        requires_xml: bool = False,
         **kwargs
     ) -> AsyncGenerator[str, None]:
         """Stream a completion from Gemini CLI."""
@@ -259,13 +298,12 @@ class GeminiCLI:
             # Convert messages to a single prompt
             prompt = self._messages_to_prompt(messages)
             
-            # Apply prompt injections if in chat mode
-            enhanced_prompt = self._prepare_prompt_with_injections(prompt, messages, is_chat_mode)
+            # Apply prompt injections if in chat mode OR if XML is required
+            enhanced_prompt = self._prepare_prompt_with_injections(prompt, messages, is_chat_mode, requires_xml)
             
-            # Build command
+            # Build command (without -p flag, we'll use stdin)
             cmd = [self.gemini_path]
             cmd.extend(['-m', model_name])
-            cmd.extend(['-p', enhanced_prompt])
             
             if force_sandbox:
                 cmd.append('-s')
@@ -273,7 +311,8 @@ class GeminiCLI:
             if self.yolo_mode and not is_chat_mode:  # Disable YOLO in chat mode for safety
                 cmd.append('-y')
             
-            logger.debug(f"Executing Gemini CLI: {' '.join(cmd[:4])}...")  # Log partial command
+            logger.debug(f"Executing Gemini CLI: {' '.join(cmd)}...")
+            logger.debug(f"Prompt length: {len(enhanced_prompt)} chars")
             
             # Sanitize environment in chat mode
             original_env = {}
@@ -288,13 +327,19 @@ class GeminiCLI:
                         original_env[var] = os.environ.pop(var)
                         logger.debug(f"Temporarily removed environment variable: {var}")
             
-            # Start the process
+            # Start the process with stdin pipe
             process = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(cwd)
             )
+            
+            # Send the prompt via stdin
+            process.stdin.write(enhanced_prompt.encode())
+            await process.stdin.drain()
+            process.stdin.close()
             
             # Stream output line by line
             buffer = ""

@@ -45,7 +45,8 @@ class ImageAnalysisOrchestrator:
         self, 
         messages: List[Dict], 
         model: str,
-        original_prompt: Optional[str] = None
+        original_prompt: Optional[str] = None,
+        requires_xml: bool = False
     ) -> Tuple[bool, Optional[str], List[Dict]]:
         """
         Check for images in messages and analyze them if present.
@@ -54,6 +55,7 @@ class ImageAnalysisOrchestrator:
             messages: List of message dictionaries in OpenAI format
             model: Model name to determine which CLI to use
             original_prompt: Optional original user prompt for context
+            requires_xml: Whether XML format is required for responses
             
         Returns:
             Tuple of (has_images, analysis_result, modified_messages)
@@ -112,7 +114,8 @@ class ImageAnalysisOrchestrator:
                     messages, 
                     analysis,
                     image_mappings,
-                    image_placeholders
+                    image_placeholders,
+                    requires_xml
                 )
                 return True, analysis, modified_messages
             else:
@@ -242,11 +245,20 @@ class ImageAnalysisOrchestrator:
             for filename in filenames:
                 prompt_parts.append(f"@{filename}")
             
-            # Add analysis request
+            # Add analysis request - keep it simple for Gemini
             if user_prompt:
-                prompt_parts.append(f"Analyze these images and answer: {user_prompt}")
+                # Clean up the prompt if it contains complex instructions
+                if "[ERROR]" in user_prompt or "tool" in user_prompt.lower():
+                    # For error recovery scenarios, just ask for description
+                    prompt_parts.append("Please describe what you see in this image.")
+                elif len(user_prompt) > 200:
+                    # For very long prompts, just ask for description
+                    prompt_parts.append("Please describe this image in detail.")
+                else:
+                    # For simple prompts, use them
+                    prompt_parts.append(f"Analyze this image and answer: {user_prompt}")
             else:
-                prompt_parts.append("Please analyze and describe these images in detail.")
+                prompt_parts.append("Please analyze and describe this image in detail.")
             
             analysis_prompt = " ".join(prompt_parts)
             
@@ -335,7 +347,8 @@ class ImageAnalysisOrchestrator:
         messages: List[Dict],
         analysis: str,
         image_mappings: Dict[str, str],
-        image_placeholders: Dict[str, Optional[str]]
+        image_placeholders: Dict[str, Optional[str]],
+        requires_xml: bool = False
     ) -> List[Dict]:
         """
         Inject image analysis as context into messages.
@@ -345,6 +358,7 @@ class ImageAnalysisOrchestrator:
             analysis: Image analysis result
             image_mappings: Mapping of image URLs to paths
             image_placeholders: Detected placeholders
+            requires_xml: Whether XML format is required
             
         Returns:
             Modified messages with analysis context
@@ -352,10 +366,13 @@ class ImageAnalysisOrchestrator:
         # Create a copy of messages
         modified_messages = []
         
+        # Track if we've found images to inject analysis for
+        found_images_in_message = False
+        
         for msg in messages:
             msg_copy = msg.copy()
             
-            # If this is a user message with images, modify it
+            # If this is a user message with images, process it
             if msg_copy.get("role") == "user":
                 content = msg_copy.get("content", "")
                 
@@ -383,19 +400,44 @@ class ImageAnalysisOrchestrator:
                                     break
                 
                 if has_images:
+                    found_images_in_message = True
                     # Convert content to text only, removing image parts
                     new_content = self._extract_text_content(content)
                     
-                    # Add analysis context
-                    analysis_context = f"\n\n[Image Analysis Context: {analysis}]\n\n"
-                    
-                    if isinstance(new_content, str):
-                        msg_copy["content"] = new_content + analysis_context
+                    if requires_xml:
+                        # For XML scenarios, don't modify the user content
+                        # Just remove the image parts
+                        msg_copy["content"] = new_content
                     else:
-                        # Should not happen, but handle list case
-                        msg_copy["content"] = str(new_content) + analysis_context
+                        # For non-XML scenarios, add analysis context inline
+                        analysis_context = f"\n\n[Image Analysis Context: {analysis}]\n\n"
+                        if isinstance(new_content, str):
+                            msg_copy["content"] = new_content + analysis_context
+                        else:
+                            msg_copy["content"] = str(new_content) + analysis_context
             
             modified_messages.append(msg_copy)
+        
+        # For XML scenarios, add analysis as a system message after processing all messages
+        if requires_xml and found_images_in_message and analysis:
+            # Insert a system message with the image analysis right after the system messages
+            # Find the last system message index
+            last_system_idx = -1
+            for i, msg in enumerate(modified_messages):
+                if msg.get("role") == "system":
+                    last_system_idx = i
+            
+            # Create the image analysis system message
+            analysis_system_msg = {
+                "role": "system",
+                "content": f"Image Analysis Results:\n{analysis}\n\nUse this information to respond to the user's request."
+            }
+            
+            # Insert after last system message, or at beginning if no system messages
+            insert_idx = last_system_idx + 1 if last_system_idx >= 0 else 0
+            modified_messages.insert(insert_idx, analysis_system_msg)
+            
+            logger.info(f"Added image analysis as system message for XML scenario at index {insert_idx}")
         
         return modified_messages
     

@@ -1358,20 +1358,22 @@ async def stream_with_progress_injection(
 
 async def generate_gemini_streaming_response(
     request: ChatCompletionRequest,
-    request_id: str
+    request_id: str,
+    requires_xml: bool = False
 ) -> AsyncGenerator[str, None]:
     """Generate streaming response from Gemini."""
     try:
         # Convert messages to list of dicts
         messages = [msg.dict() for msg in request.messages]
         
-        # Stream from Gemini
+        # Stream from Gemini - pass requires_xml flag
         async for chunk in gemini_cli.stream_completion(
             messages=messages,
             model=request.model,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
-            tools=request.tools if hasattr(request, 'tools') else None
+            tools=request.tools if hasattr(request, 'tools') else None,
+            requires_xml=requires_xml
         ):
             # Format chunk for SSE
             if chunk:
@@ -1699,6 +1701,37 @@ async def chat_completions(
         else:
             logger.info(f"Chat mode activated for {base_model} (provider: {provider})")
         
+        # Convert messages to dict format for analysis
+        messages_dict = [msg.dict() for msg in request_body.messages]
+        
+        # Detect if XML format is required (for Gemini and Claude)
+        requires_xml = False
+        if messages_dict:
+            # Import the XML detector
+            from xml_detector import DeterministicXMLDetector
+            xml_detector = DeterministicXMLDetector()
+            
+            # Get the last user message content for detection
+            last_user_content = ""
+            for msg in reversed(messages_dict):
+                if msg.get("role") == "user":
+                    content = msg.get("content", "")
+                    if isinstance(content, list):
+                        # Extract text from multimodal content
+                        text_parts = []
+                        for item in content:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                        last_user_content = " ".join(text_parts)
+                    else:
+                        last_user_content = str(content)
+                    break
+            
+            # Detect XML requirements
+            requires_xml, detection_reason, _ = xml_detector.detect(last_user_content, messages_dict)
+            if requires_xml:
+                logger.info(f"XML format detected for image processing: {detection_reason}")
+        
         # Process images if present (applies to all providers)
         image_orchestrator = ImageAnalysisOrchestrator(
             claude_cli_path=os.getenv('CLAUDE_CLI_PATH', 'claude'),
@@ -1706,14 +1739,26 @@ async def chat_completions(
             verbose=VERBOSE
         )
         
-        # Convert messages to dict format for analysis
-        messages_dict = [msg.dict() for msg in request_body.messages]
+        # Extract clean text from the last message for image analysis
+        last_message_text = None
+        if messages_dict:
+            last_content = messages_dict[-1].get('content')
+            if isinstance(last_content, str):
+                last_message_text = last_content
+            elif isinstance(last_content, list):
+                # Extract text parts from multimodal content
+                text_parts = []
+                for item in last_content:
+                    if isinstance(item, dict) and item.get('type') == 'text':
+                        text_parts.append(item.get('text', ''))
+                last_message_text = ' '.join(text_parts) if text_parts else None
         
         # Check for images and analyze if present
         has_images, image_analysis, modified_messages = image_orchestrator.analyze_images_if_present(
             messages_dict,
             base_model,
-            messages_dict[-1].get('content') if messages_dict else None
+            last_message_text,  # Pass clean text, not the entire content structure
+            requires_xml=requires_xml
         )
         
         if has_images and image_analysis:
@@ -1724,8 +1769,8 @@ async def chat_completions(
         # Handle Gemini models separately
         if provider == "gemini":
             if request_body.stream:
-                # Gemini streaming response
-                stream_generator = generate_gemini_streaming_response(request_body, request_id)
+                # Gemini streaming response - pass requires_xml flag
+                stream_generator = generate_gemini_streaming_response(request_body, request_id, requires_xml=requires_xml)
                 return StreamingResponse(
                     stream_generator,
                     media_type="text/event-stream",
