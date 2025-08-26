@@ -235,9 +235,12 @@ class ImageAnalysisOrchestrator:
             # Build analysis prompt with @ syntax for Gemini
             prompt_parts = []
             
-            # Add image references using @ syntax
-            for path in image_paths:
-                prompt_parts.append(f"@{path}")
+            # Use only filenames since Gemini runs in the sandbox directory
+            filenames = [Path(path).name for path in image_paths]
+            
+            # Add image references using @ syntax with relative filenames
+            for filename in filenames:
+                prompt_parts.append(f"@{filename}")
             
             # Add analysis request
             if user_prompt:
@@ -247,18 +250,18 @@ class ImageAnalysisOrchestrator:
             
             analysis_prompt = " ".join(prompt_parts)
             
-            # Build Gemini CLI command
+            # Build Gemini CLI command (no -q flag, use stdin)
             cmd = [
-                self.gemini_cli_path,
-                "-q",  # Quiet mode (no markdown formatting)
-                analysis_prompt
+                self.gemini_cli_path
             ]
             
             logger.info(f"Running Gemini CLI for image analysis")
+            logger.debug(f"Prompt: {analysis_prompt[:200]}...")
             
-            # Run the command
+            # Run the command with prompt via stdin
             result = subprocess.run(
                 cmd,
+                input=analysis_prompt,  # Send prompt via stdin
                 capture_output=True,
                 text=True,
                 cwd=sandbox_dir,
@@ -272,7 +275,8 @@ class ImageAnalysisOrchestrator:
             
             analysis = result.stdout.strip()
             if analysis:
-                logger.info("Successfully analyzed images with Gemini")
+                logger.info(f"Successfully analyzed images with Gemini ({len(analysis)} chars)")
+                logger.debug(f"Analysis preview: {analysis[:200]}...")
                 return analysis
             else:
                 logger.warning("Gemini returned empty analysis")
