@@ -49,11 +49,12 @@ class DeterministicXMLDetector:
         
         # Code/example contexts - XML within code blocks
         r'```[^`]*<\w+>.*</\w+>[^`]*```',
-        r'    <\w+>.*</\w+>',  # 4-space indented code
+        # NOTE: Removed overly broad 4-space indented pattern that was catching legitimate XML
+        # The pattern r'    <\w+>.*</\w+>' was blocking valid environment_details and other system XML
         
-        # Example indicators before XML
-        r'(?:example|sample|demo|e\.g\.|for instance):\s*<\w+>',
-        r'(?:here\'s|this is) (?:an? )?(?:example|sample).*<\w+>',
+        # Example indicators before XML - more specific to avoid false positives
+        r'(?:example|sample|demo|e\.g\.|for instance):\s*(?:\n|\r\n)?```[^`]*<\w+>',
+        r'(?:here\'s|this is) (?:an? )?(?:example|sample) (?:of |showing )?(?:how |the )?.*:\s*(?:\n|\r\n)?```',
         
         # HTML document indicators
         r'<!DOCTYPE\s+html',
@@ -104,6 +105,14 @@ class DeterministicXMLDetector:
             re.compile(p, re.IGNORECASE) 
             for p in self.SECONDARY_PATTERNS
         ]
+        
+        # System XML tags that should NOT trigger exclusion even if indented
+        self.system_xml_tags = {
+            'environment_details', 'task', 'file', 'files', 'error',
+            'tool_name', 'parameter', 'result', 'response',
+            'attempt_completion', 'ask_followup_question', 'new_task',
+            'read_file', 'write_file', 'list_files', 'search_files'
+        }
         
     def remove_code_blocks(self, text: str) -> str:
         """Remove code blocks from text to avoid false positives."""
@@ -254,11 +263,29 @@ class DeterministicXMLDetector:
         Returns (xml_required, reason, tool_names)
         """
         # Step 1: Check exclusion rules first (highest priority)
-        for i, pattern in enumerate(self.exclusion_rules):
-            if pattern.search(prompt):
-                reason = f"Exclusion rule #{i+1}: {self.EXCLUSION_PATTERNS[i]}"
-                logger.debug(f"XML Detection: NO - {reason}")
-                return False, reason, []
+        # BUT skip exclusion if we detect system XML tags (environment_details, etc.)
+        contains_system_xml = any(
+            f"<{tag}>" in prompt.lower() or f"</{tag}>" in prompt.lower()
+            for tag in self.system_xml_tags
+        )
+        
+        # Also check for indented XML that might be legitimate system/tool content
+        indented_xml_pattern = r'    <(\w+)>'
+        indented_matches = re.findall(indented_xml_pattern, prompt)
+        has_system_indented_xml = any(
+            tag.lower() in self.system_xml_tags 
+            for tag in indented_matches
+        )
+        
+        if not contains_system_xml and not has_system_indented_xml:
+            # Only apply exclusion rules if there's no system XML present
+            for i, pattern in enumerate(self.exclusion_rules):
+                if pattern.search(prompt):
+                    reason = f"Exclusion rule #{i+1}: {self.EXCLUSION_PATTERNS[i]}"
+                    logger.debug(f"XML Detection: NO - {reason}")
+                    return False, reason, []
+        else:
+            logger.debug("Skipping exclusion rules due to presence of system XML tags")
         
         # Step 2: Check primary triggers (definitive XML required)
         for i, pattern in enumerate(self.primary_triggers):
