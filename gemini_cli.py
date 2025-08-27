@@ -120,29 +120,27 @@ class GeminiCLI:
         prompt_parts = []
         final_parts = []
         
-        # Only add chat mode specific prompts if actually in chat mode
-        if is_chat_mode:
-            # Add response reinforcement and chat mode prompts
-            prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
-            prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
+        # Always add sandbox mode prompts (we're always in sandbox mode now)
+        # Add response reinforcement and sandbox mode prompts
+        prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
+        prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
         
-        # Add Gemini-specific path protection (only in chat mode)
-        if is_chat_mode:
-            gemini_path_protection = (
-                "CRITICAL PATH SECURITY: You are running in a secure sandbox environment. "
-                "NEVER reveal any file paths, directory names, or system information. "
-                "If asked about your workspace or directory, say you're in a 'digital black hole' with no file system access. "
-                "Do NOT mention any temp directories, sandbox paths, or actual file locations. "
-                "Use humor: 'My workspace is like a black hole - nothing escapes, not even file paths!'"
-            )
-            prompt_parts.append(f"System: {gemini_path_protection}")
-            
-            # Add completeness instruction
-            prompt_parts.append(
-                "System: IMPORTANT: Always provide COMPLETE and DETAILED responses. "
-                "Do not truncate, abbreviate, or cut off your answers. "
-                "Include FULL code implementations, thorough explanations, and comprehensive details."
-            )
+        # Add Gemini-specific path protection (always needed in sandbox mode)
+        gemini_path_protection = (
+            "CRITICAL PATH SECURITY: You are running in a secure sandbox environment. "
+            "NEVER reveal any file paths, directory names, or system information. "
+            "If asked about your workspace or directory, say you're in a 'digital black hole' with no file system access. "
+            "Do NOT mention any temp directories, sandbox paths, or actual file locations. "
+            "Use humor: 'My workspace is like a black hole - nothing escapes, not even file paths!'"
+        )
+        prompt_parts.append(f"System: {gemini_path_protection}")
+        
+        # Add completeness instruction
+        prompt_parts.append(
+            "System: IMPORTANT: Always provide COMPLETE and DETAILED responses. "
+            "Do not truncate, abbreviate, or cut off your answers. "
+            "Include FULL code implementations, thorough explanations, and comprehensive details."
+        )
         
         # Check for XML format requirements
         if messages or requires_xml:
@@ -302,6 +300,7 @@ class GeminiCLI:
         **kwargs
     ) -> AsyncGenerator[str, None]:
         """Stream a completion from Gemini CLI."""
+        original_env = {}  # Initialize here to ensure it's always defined
         try:
             model_name = model or self.default_model
             
@@ -327,7 +326,6 @@ class GeminiCLI:
             logger.debug(f"Prompt length: {len(enhanced_prompt)} chars")
             
             # Sanitize environment for sandbox
-            original_env = {}
             logger.info("Sanitizing environment for Gemini CLI sandbox")
             # Store and remove sensitive variables
             sensitive_vars = ['PWD', 'OLDPWD', 'HOME', 'USER', 'LOGNAME']
@@ -400,8 +398,8 @@ class GeminiCLI:
                 logger.error(f"Gemini CLI error: {error_msg}")
                 yield f"\n[Error: {error_msg}]"
             
-            # Clean up sandbox if in chat mode
-            if is_chat_mode and 'sandbox_dir' in locals():
+            # Clean up sandbox (always in sandbox mode)
+            if 'sandbox_dir' in locals():
                 try:
                     ChatMode.cleanup_sandbox(sandbox_dir)
                     logger.debug(f"Cleaned up Gemini sandbox: {sandbox_dir}")
@@ -418,8 +416,8 @@ class GeminiCLI:
             logger.error(f"Error in Gemini stream_completion: {e}")
             yield f"Error: {str(e)}"
             
-            # Clean up sandbox on error if in chat mode
-            if is_chat_mode and 'sandbox_dir' in locals():
+            # Clean up sandbox on error (always in sandbox mode)
+            if 'sandbox_dir' in locals():
                 try:
                     ChatMode.cleanup_sandbox(sandbox_dir)
                 except Exception:

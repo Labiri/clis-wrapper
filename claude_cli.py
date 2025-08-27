@@ -54,8 +54,7 @@ class ClaudeCodeCLI:
             async for message in query(
                 prompt="Hello",
                 options=ClaudeCodeOptions(
-                    max_turns=1,
-                    cwd=self.cwd
+                    max_turns=1
                 )
             ):
                 messages.append(message)
