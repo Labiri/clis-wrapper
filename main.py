@@ -1711,30 +1711,45 @@ async def chat_completions(
         # Detect if XML format is required (for Gemini and Claude)
         requires_xml = False
         if messages_dict:
-            # Import the XML detector
-            from xml_detector import DeterministicXMLDetector
-            xml_detector = DeterministicXMLDetector()
+            # Import the XML detectors
+            from xml_detector import DeterministicXMLDetector, ConfidenceBasedXMLDetector
             
-            # Get the last user message content for detection
-            last_user_content = ""
-            for msg in reversed(messages_dict):
-                if msg.get("role") == "user":
-                    content = msg.get("content", "")
-                    if isinstance(content, list):
-                        # Extract text from multimodal content
-                        text_parts = []
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == "text":
-                                text_parts.append(item.get("text", ""))
-                        last_user_content = " ".join(text_parts)
-                    else:
-                        last_user_content = str(content)
-                    break
+            # Check if confidence-based detection is enabled
+            use_confidence_detection = os.getenv('XML_CONFIDENCE_DETECTION', 'false').lower() == 'true'
+            confidence_threshold = float(os.getenv('XML_CONFIDENCE_THRESHOLD', '5.0'))
             
-            # Detect XML requirements
-            requires_xml, detection_reason, _ = xml_detector.detect(last_user_content, messages_dict)
-            if requires_xml:
-                logger.info(f"XML format detected for image processing: {detection_reason}")
+            if use_confidence_detection:
+                # Use confidence-based detection for nuanced scenarios
+                confidence_detector = ConfidenceBasedXMLDetector(confidence_threshold=confidence_threshold)
+                requires_xml, confidence_score, detected_patterns = confidence_detector.detect_with_confidence(messages_dict)
+                
+                if requires_xml:
+                    detection_reason = f"Confidence score {confidence_score:.1f} (patterns: {', '.join(detected_patterns[:3])})"
+                    logger.info(f"XML format detected via confidence scoring: {detection_reason}")
+            else:
+                # Use deterministic detection (default)
+                xml_detector = DeterministicXMLDetector()
+                
+                # Get the last user message content for detection
+                last_user_content = ""
+                for msg in reversed(messages_dict):
+                    if msg.get("role") == "user":
+                        content = msg.get("content", "")
+                        if isinstance(content, list):
+                            # Extract text from multimodal content
+                            text_parts = []
+                            for item in content:
+                                if isinstance(item, dict) and item.get("type") == "text":
+                                    text_parts.append(item.get("text", ""))
+                            last_user_content = " ".join(text_parts)
+                        else:
+                            last_user_content = str(content)
+                        break
+                
+                # Detect XML requirements
+                requires_xml, detection_reason, _ = xml_detector.detect(last_user_content, messages_dict)
+                if requires_xml:
+                    logger.info(f"XML format detected for image processing: {detection_reason}")
         
         # Process images if present (applies to all providers)
         image_orchestrator = ImageAnalysisOrchestrator(
