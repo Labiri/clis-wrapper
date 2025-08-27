@@ -84,9 +84,9 @@ class ClaudeCodeCLI:
             return False
     
     
-    def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None) -> str:
+    def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, requires_xml: bool = False) -> str:
         """Prepare prompt with system injections based on format detection."""
-        logger.debug("Preparing prompt with injections")
+        logger.debug(f"Preparing prompt with injections, requires_xml={requires_xml}")
         # Import MessageAdapter to use the format detection
         from message_adapter import MessageAdapter
         import re
@@ -103,8 +103,14 @@ class ClaudeCodeCLI:
             mid_injections = []
             post_injections = []
             
-            # Use deterministic XML detector
+            # Use deterministic XML detector or explicit requires_xml flag
             xml_required, detection_reason, xml_tool_names = self.xml_detector.detect(prompt, messages)
+            
+            # Override with explicit requires_xml flag if set
+            if requires_xml and not xml_required:
+                xml_required = True
+                detection_reason = "Explicit XML requirement from image analysis context"
+                logger.info("📋 XML enforcement triggered by explicit requires_xml flag")
             
             # Log the detection result
             logger.info(f"🔍 XML Detection Result: {'YES' if xml_required else 'NO'}")
@@ -145,8 +151,8 @@ class ClaudeCodeCLI:
                     if 'attempt_completion' in xml_tool_names:
                         example_text = (
                             f"\n\nREMINDER: Format your response using XML tags.\n"
-                            f"For completing tasks, format as: <attempt_completion><result>your response</result></attempt_completion>\n"
-                            f"For asking questions, format as: <ask_followup_question><question>your question</question><follow_up>...</follow_up></ask_followup_question>\n"
+                            f"For completing tasks, format as: <attempt_completion>\n<result>your response</result>\n</attempt_completion>\n"
+                            f"For asking questions, format as: <ask_followup_question>\n<question>your question here</question>\n</ask_followup_question>\n"
                             f"DO NOT use <environment_details>, <task>, or other structural tags - only the response formatting tags above."
                         )
                     else:
@@ -277,7 +283,8 @@ class ClaudeCodeCLI:
         disallowed_tools: Optional[List[str]] = None,
         session_id: Optional[str] = None,
         continue_session: bool = False,
-        messages: Optional[List[Dict]] = None
+        messages: Optional[List[Dict]] = None,
+        requires_xml: bool = False
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Run Claude Code using the Python SDK and yield response chunks."""
         
@@ -298,7 +305,7 @@ class ClaudeCodeCLI:
         
         # Prepare prompt with injections
         logger.debug(f"Original prompt length: {len(prompt)}")
-        enhanced_prompt = self._prepare_prompt_with_injections(prompt, messages)
+        enhanced_prompt = self._prepare_prompt_with_injections(prompt, messages, requires_xml)
         logger.debug(f"Enhanced prompt length: {len(enhanced_prompt)}")
         if enhanced_prompt != prompt:
             logger.info(f"Prompt was enhanced with injections (added {len(enhanced_prompt) - len(prompt)} chars)")

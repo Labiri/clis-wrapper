@@ -643,7 +643,8 @@ def cleanup_claude_session(sandbox_dir: str, session_id: str) -> bool:
 async def stream_final_content_only(
     request: ChatCompletionRequest,
     request_id: str,
-    claude_headers: Optional[Dict[str, Any]] = None
+    claude_headers: Optional[Dict[str, Any]] = None,
+    requires_xml: bool = False
 ) -> AsyncGenerator[str, None]:
     """Generate SSE formatted streaming response with only final content (no intermediate tool uses)."""
     sandbox_dir = None
@@ -734,7 +735,8 @@ async def stream_final_content_only(
                     allowed_tools=claude_options.get('allowed_tools'),
                     disallowed_tools=claude_options.get('disallowed_tools'),
                     stream=True,
-                    messages=[msg.model_dump() if hasattr(msg, 'model_dump') else msg for msg in all_messages]
+                    messages=[msg.model_dump() if hasattr(msg, 'model_dump') else msg for msg in all_messages],
+                    requires_xml=requires_xml
                 ):
                     await chunk_queue.put(chunk)
                 logger.debug("SDK stream consumer completed normally")
@@ -1403,7 +1405,8 @@ async def generate_gemini_streaming_response(
 async def generate_streaming_response(
     request: ChatCompletionRequest,
     request_id: str,
-    claude_headers: Optional[Dict[str, Any]] = None
+    claude_headers: Optional[Dict[str, Any]] = None,
+    requires_xml: bool = False
 ) -> AsyncGenerator[str, None]:
     """Generate SSE formatted streaming response."""
     sandbox_dir = None  # Track sandbox for cleanup
@@ -1461,7 +1464,8 @@ async def generate_streaming_response(
                     allowed_tools=claude_options.get('allowed_tools'),
                     disallowed_tools=claude_options.get('disallowed_tools'),
                     stream=True,
-                    messages=[msg.model_dump() if hasattr(msg, 'model_dump') else msg for msg in all_messages]  # Convert to dicts for format detection
+                    messages=[msg.model_dump() if hasattr(msg, 'model_dump') else msg for msg in all_messages],  # Convert to dicts for format detection
+                    requires_xml=requires_xml  # Pass XML requirement flag
                 ):
                     yield chunk
             except asyncio.CancelledError:
@@ -1750,7 +1754,19 @@ async def chat_completions(
                 text_parts = []
                 for item in last_content:
                     if isinstance(item, dict) and item.get('type') == 'text':
-                        text_parts.append(item.get('text', ''))
+                        text = item.get('text', '')
+                        # Filter out specific Roocode error messages
+                        # Look for specific patterns that indicate Roocode errors
+                        is_roocode_error = (
+                            (text.startswith('[ERROR]') and 'You did not use a tool' in text) or
+                            (text.startswith('[') and 'Result: The tool execution fail' in text) or
+                            ('Roo tried to use' in text and 'without value for required parameter' in text) or
+                            (text.startswith('[') and 'undefined' in text and 'question' in text)
+                        )
+                        if not is_roocode_error:
+                            text_parts.append(text)
+                        else:
+                            logger.debug(f"Filtered out Roocode error message from image prompt: {text[:100]}...")
                 last_message_text = ' '.join(text_parts) if text_parts else None
         
         # Check for images and analyze if present
@@ -1822,17 +1838,17 @@ async def chat_completions(
                 # Chat mode with progress markers enabled
                 logger.info("Chat mode: Wrapping stream with progress indicators")
                 stream_generator = stream_with_progress_injection(
-                    generate_streaming_response(request_body, request_id, claude_headers),
+                    generate_streaming_response(request_body, request_id, claude_headers, requires_xml),
                     request_id,
                     request_body.model
                 )
             elif not show_progress_markers:
                 # Progress markers disabled - show only final content
                 logger.info("Progress markers disabled: Streaming final content only")
-                stream_generator = stream_final_content_only(request_body, request_id, claude_headers)
+                stream_generator = stream_final_content_only(request_body, request_id, claude_headers, requires_xml)
             else:
                 # Normal mode - all chunks without progress injection
-                stream_generator = generate_streaming_response(request_body, request_id, claude_headers)
+                stream_generator = generate_streaming_response(request_body, request_id, claude_headers, requires_xml)
             
             return StreamingResponse(
                 stream_generator,
@@ -1882,7 +1898,8 @@ async def chat_completions(
                 allowed_tools=claude_options.get('allowed_tools'),
                 disallowed_tools=claude_options.get('disallowed_tools'),
                 stream=False,
-                messages=[msg.model_dump() if hasattr(msg, 'model_dump') else msg for msg in all_messages]  # Convert to dicts for format detection
+                messages=[msg.model_dump() if hasattr(msg, 'model_dump') else msg for msg in all_messages],  # Convert to dicts for format detection
+                requires_xml=requires_xml
             ):
                 chunks.append(chunk)
             

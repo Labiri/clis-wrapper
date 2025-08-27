@@ -115,7 +115,8 @@ class ImageAnalysisOrchestrator:
                     analysis,
                     image_mappings,
                     image_placeholders,
-                    requires_xml
+                    requires_xml,
+                    model
                 )
                 return True, analysis, modified_messages
             else:
@@ -348,7 +349,8 @@ class ImageAnalysisOrchestrator:
         analysis: str,
         image_mappings: Dict[str, str],
         image_placeholders: Dict[str, Optional[str]],
-        requires_xml: bool = False
+        requires_xml: bool = False,
+        model: str = ""
     ) -> List[Dict]:
         """
         Inject image analysis as context into messages.
@@ -359,6 +361,7 @@ class ImageAnalysisOrchestrator:
             image_mappings: Mapping of image URLs to paths
             image_placeholders: Detected placeholders
             requires_xml: Whether XML format is required
+            model: Model name for model-specific injection logic
             
         Returns:
             Modified messages with analysis context
@@ -404,12 +407,25 @@ class ImageAnalysisOrchestrator:
                     # Convert content to text only, removing image parts
                     new_content = self._extract_text_content(content)
                     
-                    if requires_xml:
-                        # For XML scenarios, don't modify the user content
-                        # Just remove the image parts
-                        msg_copy["content"] = new_content
+                    # Model-specific injection strategy
+                    if model.startswith("claude"):
+                        # Claude: ALWAYS use inline injection (proven to work)
+                        analysis_context = f"\n\n[Image Analysis Context: {analysis}]\n\n"
+                        if isinstance(new_content, str):
+                            msg_copy["content"] = new_content + analysis_context
+                        else:
+                            msg_copy["content"] = str(new_content) + analysis_context
+                    elif model.startswith("gemini"):
+                        # Gemini: Use system message for XML, inline for non-XML
+                        if requires_xml:
+                            # Just remove image parts, will add system message later
+                            msg_copy["content"] = new_content
+                        else:
+                            # Non-XML Gemini can use inline
+                            analysis_context = f"\n\n[Image Analysis Context: {analysis}]\n\n"
+                            msg_copy["content"] = new_content + analysis_context
                     else:
-                        # For non-XML scenarios, add analysis context inline
+                        # Default: use inline (safer, matches original working version)
                         analysis_context = f"\n\n[Image Analysis Context: {analysis}]\n\n"
                         if isinstance(new_content, str):
                             msg_copy["content"] = new_content + analysis_context
@@ -418,8 +434,8 @@ class ImageAnalysisOrchestrator:
             
             modified_messages.append(msg_copy)
         
-        # For XML scenarios, add analysis as a system message after processing all messages
-        if requires_xml and found_images_in_message and analysis:
+        # For Gemini XML scenarios, add analysis as a system message after processing all messages
+        if requires_xml and model.startswith("gemini") and found_images_in_message and analysis:
             # Insert a system message with the image analysis right after the system messages
             # Find the last system message index
             last_system_idx = -1
