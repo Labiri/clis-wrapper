@@ -25,8 +25,6 @@ class GeminiCLI:
         
         # Model configuration
         self.default_model = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
-        self.enable_sandbox = os.getenv('GEMINI_SANDBOX', 'false').lower() == 'true'
-        self.yolo_mode = os.getenv('GEMINI_YOLO', 'false').lower() == 'true'
         
         # Gemini CLI path
         self.gemini_path = os.getenv('GEMINI_CLI_PATH', 'gemini')
@@ -310,7 +308,6 @@ class GeminiCLI:
             # Always create sandbox directory for this request
             sandbox_dir = ChatMode.create_sandbox()
             cwd = Path(sandbox_dir)
-            force_sandbox = True  # Always use sandbox
             logger.info(f"Gemini: Using sandbox at {sandbox_dir}")
             
             # Convert messages to a single prompt
@@ -323,12 +320,8 @@ class GeminiCLI:
             cmd = [self.gemini_path]
             cmd.extend(['-m', model_name])
             
-            if force_sandbox:
-                cmd.append('-s')
-            
-            # YOLO mode disabled in sandbox for safety
-            # if self.yolo_mode:
-            #     cmd.append('-y')
+            # Always use sandbox mode
+            cmd.append('-s')
             
             logger.debug(f"Executing Gemini CLI: {' '.join(cmd)}...")
             logger.debug(f"Prompt length: {len(enhanced_prompt)} chars")

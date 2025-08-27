@@ -11,6 +11,9 @@ services:
     environment:
       # Claude CLI Configuration
       - CLAUDE_CLI_PATH=${CLAUDE_CLI_PATH:-claude}
+      # Gemini CLI Configuration
+      - GEMINI_CLI_PATH=${GEMINI_CLI_PATH:-gemini}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-pro}
       # API Configuration
       - PORT=${PORT:-8000}
       - API_KEY=${API_KEY:-}
@@ -21,11 +24,14 @@ services:
       # Logging Configuration
       - DEBUG_MODE=${DEBUG_MODE:-false}
       - VERBOSE=${VERBOSE:-false}
-      # Chat Mode Session Cleanup Configuration
-      - CHAT_MODE_CLEANUP_SESSIONS=${CHAT_MODE_CLEANUP_SESSIONS:-true}
-      - CHAT_MODE_CLEANUP_DELAY_MINUTES=${CHAT_MODE_CLEANUP_DELAY_MINUTES:-720}
+      # Session Cleanup Configuration
+      - CLEANUP_SESSIONS=${CLEANUP_SESSIONS:-true}
+      - CLEANUP_DELAY_MINUTES=${CLEANUP_DELAY_MINUTES:-720}
       # SSE Keep-alive
       - SSE_KEEPALIVE_INTERVAL=${SSE_KEEPALIVE_INTERVAL:-30}
+      # XML Detection Configuration
+      - XML_CONFIDENCE_THRESHOLD=${XML_CONFIDENCE_THRESHOLD:-5.0}
+      - XML_KNOWN_TOOLS=${XML_KNOWN_TOOLS:-attempt_completion,ask_followup_question,read_file,write_to_file,run_command,str_replace_editor,search_files,list_files,new_task,apply_diff,execute_command,switch_mode,update_todo_list}
       # Rate Limiting Configuration
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
       - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-30}
