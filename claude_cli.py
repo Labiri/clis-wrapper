@@ -10,7 +10,7 @@ from claude_code_sdk import query, ClaudeCodeOptions, Message
 # Import chat mode utilities
 from chat_mode import ChatMode
 from prompts import ChatModePrompts, FormatDetector, inject_prompts
-from xml_detector import DeterministicXMLDetector
+from xml_detector import XMLDetector
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class ClaudeCodeCLI:
         # Always operates in chat mode with sandbox isolation
         self.format_detector = FormatDetector()
         self.prompts = ChatModePrompts()
-        self.xml_detector = DeterministicXMLDetector()
+        self.xml_detector = XMLDetector()
         self.last_session_id = None  # Track session ID for cleanup
         
         # Default working directory - will be overridden with sandbox directory
@@ -103,8 +103,15 @@ class ClaudeCodeCLI:
             mid_injections = []
             post_injections = []
             
-            # Use deterministic XML detector or explicit requires_xml flag
-            xml_required, detection_reason, xml_tool_names = self.xml_detector.detect(prompt, messages)
+            # Create combined messages for XML detection
+            combined_messages = messages or []
+            if prompt:
+                combined_messages = combined_messages + [{"role": "user", "content": prompt}]
+            
+            # Use confidence-based XML detector
+            xml_required, confidence_score, detected_patterns = self.xml_detector.detect(combined_messages)
+            detection_reason = f"Confidence: {confidence_score}" if xml_required else ""
+            xml_tool_names = detected_patterns  # Use patterns as tool names for compatibility
             
             # Override with explicit requires_xml flag if set
             if requires_xml and not xml_required:
@@ -328,12 +335,15 @@ class ClaudeCodeCLI:
             logger.info("=== END SDK OPTIONS ===")
             
         # Verify XML enforcement is present if expected
-        xml_check_required, _, _ = self.xml_detector.detect(prompt, messages)
+        combined_messages = messages or []
+        if prompt:
+            combined_messages = combined_messages + [{"role": "user", "content": prompt}]
+        xml_check_required, _, _ = self.xml_detector.detect(combined_messages)
         if xml_check_required:
             if "CRITICAL - THIS IS MANDATORY" in enhanced_prompt or "FAILSAFE XML ENFORCEMENT" in enhanced_prompt:
                 logger.info("✓ XML enforcement successfully added to prompt")
             else:
-                logger.error("✗ XML enforcement NOT found in enhanced prompt despite deterministic detection!")
+                logger.error("✗ XML enforcement NOT found in enhanced prompt despite confidence detection!")
         
         try:
             # Set authentication environment variables (if any)

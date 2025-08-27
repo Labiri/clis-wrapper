@@ -11,7 +11,7 @@ import re
 # Import chat mode utilities
 from chat_mode import ChatMode, sanitized_environment
 from prompts import ChatModePrompts, FormatDetector
-from xml_detector import DeterministicXMLDetector
+from xml_detector import XMLDetector
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class GeminiCLI:
         # Chat mode utilities
         self.format_detector = FormatDetector()
         self.prompts = ChatModePrompts()
-        self.xml_detector = DeterministicXMLDetector()
+        self.xml_detector = XMLDetector()
         
         logger.info(f"Initialized Gemini CLI with model: {self.default_model}")
     
@@ -155,7 +155,11 @@ class GeminiCLI:
                 detection_reason = "Explicit XML requirement from image analysis context"
                 xml_tool_names = []
             elif messages:
-                xml_required, detection_reason, xml_tool_names = self.xml_detector.detect(prompt, messages)
+                # Create combined messages for XML detection
+                combined_messages = messages + [{"role": "user", "content": prompt}] if prompt else messages
+                xml_required, confidence_score, detected_patterns = self.xml_detector.detect(combined_messages)
+                detection_reason = f"Confidence: {confidence_score}" if xml_required else ""
+                xml_tool_names = detected_patterns  # Use patterns as tool names for compatibility
             else:
                 xml_required = False
             
