@@ -143,14 +143,12 @@ def prompt_for_api_protection() -> Optional[str]:
 
 # Initialize Claude CLI
 claude_cli = ClaudeCodeCLI(
-    timeout=int(os.getenv("MAX_TIMEOUT", "600000")),
-    cwd=os.getenv("CLAUDE_CWD")
+    timeout=int(os.getenv("MAX_TIMEOUT", "600000"))
 )
 
 # Initialize Gemini CLI
 gemini_cli = GeminiCLI(
-    timeout=int(os.getenv("MAX_TIMEOUT", "600000")),
-    cwd=os.getenv("GEMINI_CWD", os.getenv("CLAUDE_CWD"))
+    timeout=int(os.getenv("MAX_TIMEOUT", "600000"))
 )
 
 
@@ -254,7 +252,6 @@ async def lifespan(app: FastAPI):
         logger.debug(f"   PORT: {os.getenv('PORT', '8000')}")
         logger.debug(f"   CORS_ORIGINS: {os.getenv('CORS_ORIGINS', '[\"*\"]')}")
         logger.debug(f"   MAX_TIMEOUT: {os.getenv('MAX_TIMEOUT', '600000')}")
-        logger.debug(f"   CLAUDE_CWD: {os.getenv('CLAUDE_CWD', 'Not set')}")
         logger.debug(f"🔧 Available endpoints:")
         logger.debug(f"   POST /v1/chat/completions - Main chat endpoint")
         logger.debug(f"   GET  /v1/models - List available models")

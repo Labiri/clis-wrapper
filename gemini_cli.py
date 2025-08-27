@@ -19,10 +19,9 @@ logger = logging.getLogger(__name__)
 class GeminiCLI:
     """Gemini CLI integration for OpenAI-compatible API wrapper."""
     
-    def __init__(self, timeout: int = 600000, cwd: Optional[str] = None):
+    def __init__(self, timeout: int = 600000):
         """Initialize Gemini CLI with configuration."""
         self.timeout = timeout / 1000  # Convert ms to seconds
-        self.cwd = Path(cwd) if cwd else Path.cwd()
         
         # Model configuration
         self.default_model = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')
@@ -111,14 +110,14 @@ class GeminiCLI:
             
         return filtered_text
     
-    def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, is_chat_mode: bool = False, requires_xml: bool = False) -> str:
-        """Prepare prompt with system injections based on mode and format detection."""
-        # Apply injections if in chat mode OR if XML is explicitly required
-        if not is_chat_mode and not requires_xml:
-            # In normal mode without XML requirement, return prompt as-is
+    def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, requires_xml: bool = False) -> str:
+        """Prepare prompt with system injections based on format detection."""
+        # Apply injections if XML is explicitly required
+        if not requires_xml:
+            # Without XML requirement, return prompt as-is
             return prompt
             
-        logger.debug(f"Preparing Gemini prompt with injections, is_chat_mode={is_chat_mode}, requires_xml={requires_xml}")
+        logger.debug(f"Preparing Gemini prompt with injections, requires_xml={requires_xml}")
         
         prompt_parts = []
         final_parts = []
@@ -270,8 +269,7 @@ class GeminiCLI:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.cwd)
+                stderr=asyncio.subprocess.PIPE
             )
             
             stdout, stderr = await asyncio.wait_for(
@@ -302,7 +300,6 @@ class GeminiCLI:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        is_chat_mode: bool = False,
         requires_xml: bool = False,
         **kwargs
     ) -> AsyncGenerator[str, None]:
@@ -310,22 +307,17 @@ class GeminiCLI:
         try:
             model_name = model or self.default_model
             
-            # Set up chat mode if enabled
-            cwd = self.cwd
-            force_sandbox = self.enable_sandbox
-            
-            if is_chat_mode:
-                # Create sandbox directory for this request
-                sandbox_dir = ChatMode.create_sandbox()
-                cwd = Path(sandbox_dir)
-                force_sandbox = True  # Always use sandbox in chat mode
-                logger.info(f"Gemini chat mode: Using sandbox at {sandbox_dir}")
+            # Always create sandbox directory for this request
+            sandbox_dir = ChatMode.create_sandbox()
+            cwd = Path(sandbox_dir)
+            force_sandbox = True  # Always use sandbox
+            logger.info(f"Gemini: Using sandbox at {sandbox_dir}")
             
             # Convert messages to a single prompt
             prompt = self._messages_to_prompt(messages)
             
-            # Apply prompt injections if in chat mode OR if XML is required
-            enhanced_prompt = self._prepare_prompt_with_injections(prompt, messages, is_chat_mode, requires_xml)
+            # Apply prompt injections if XML is required
+            enhanced_prompt = self._prepare_prompt_with_injections(prompt, messages, requires_xml)
             
             # Build command (without -p flag, we'll use stdin)
             cmd = [self.gemini_path]
@@ -334,24 +326,24 @@ class GeminiCLI:
             if force_sandbox:
                 cmd.append('-s')
             
-            if self.yolo_mode and not is_chat_mode:  # Disable YOLO in chat mode for safety
-                cmd.append('-y')
+            # YOLO mode disabled in sandbox for safety
+            # if self.yolo_mode:
+            #     cmd.append('-y')
             
             logger.debug(f"Executing Gemini CLI: {' '.join(cmd)}...")
             logger.debug(f"Prompt length: {len(enhanced_prompt)} chars")
             
-            # Sanitize environment in chat mode
+            # Sanitize environment for sandbox
             original_env = {}
-            if is_chat_mode:
-                logger.info("Sanitizing environment for Gemini CLI in chat mode")
-                # Store and remove sensitive variables
-                sensitive_vars = ['PWD', 'OLDPWD', 'HOME', 'USER', 'LOGNAME']
-                claude_vars = [k for k in os.environ.keys() if k.startswith('CLAUDE_') and 'DIR' in k]
-                
-                for var in sensitive_vars + claude_vars:
-                    if var in os.environ:
-                        original_env[var] = os.environ.pop(var)
-                        logger.debug(f"Temporarily removed environment variable: {var}")
+            logger.info("Sanitizing environment for Gemini CLI sandbox")
+            # Store and remove sensitive variables
+            sensitive_vars = ['PWD', 'OLDPWD', 'HOME', 'USER', 'LOGNAME']
+            claude_vars = [k for k in os.environ.keys() if k.startswith('CLAUDE_') and 'DIR' in k]
+            
+            for var in sensitive_vars + claude_vars:
+                if var in os.environ:
+                    original_env[var] = os.environ.pop(var)
+                    logger.debug(f"Temporarily removed environment variable: {var}")
             
             # Start the process with stdin pipe
             process = await asyncio.create_subprocess_exec(
@@ -392,7 +384,7 @@ class GeminiCLI:
                     for line in lines[:-1]:
                         if line.strip():
                             # Filter sensitive paths in chat mode
-                            filtered_line = self._filter_sensitive_paths(line, is_chat_mode)
+                            filtered_line = self._filter_sensitive_paths(line, True)  # Always filter in sandbox mode
                             yield filtered_line + '\n'
                             
                 except asyncio.TimeoutError:
@@ -403,7 +395,7 @@ class GeminiCLI:
             
             # Yield any remaining buffer
             if buffer.strip():
-                filtered_buffer = self._filter_sensitive_paths(buffer, is_chat_mode)
+                filtered_buffer = self._filter_sensitive_paths(buffer, True)  # Always filter in sandbox mode
                 yield filtered_buffer
             
             # Wait for process to complete
@@ -423,8 +415,8 @@ class GeminiCLI:
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to cleanup sandbox {sandbox_dir}: {cleanup_error}")
             
-            # Restore environment variables in chat mode
-            if is_chat_mode and original_env:
+            # Restore environment variables
+            if original_env:
                 for var, value in original_env.items():
                     os.environ[var] = value
                     logger.debug(f"Restored environment variable: {var}")
@@ -440,8 +432,8 @@ class GeminiCLI:
                 except Exception:
                     pass
             
-            # Restore environment variables in chat mode on error
-            if is_chat_mode and original_env:
+            # Restore environment variables on error
+            if original_env:
                 for var, value in original_env.items():
                     os.environ[var] = value
     
@@ -451,7 +443,6 @@ class GeminiCLI:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        is_chat_mode: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """Generate a non-streaming completion from Gemini CLI."""
@@ -463,7 +454,6 @@ class GeminiCLI:
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                is_chat_mode=is_chat_mode,
                 **kwargs
             ):
                 response_text += chunk

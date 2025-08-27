@@ -22,7 +22,7 @@ NESTED_XML_PATTERN = re.compile(r'<\w+>\s*<\w+>')
 
 
 class ClaudeCodeCLI:
-    def __init__(self, timeout: int = 600000, cwd: Optional[str] = None):
+    def __init__(self, timeout: int = 600000):
         self.timeout = timeout / 1000  # Convert ms to seconds
         
         # Always operates in chat mode with sandbox isolation
@@ -30,9 +30,6 @@ class ClaudeCodeCLI:
         self.prompts = ChatModePrompts()
         self.xml_detector = XMLDetector()
         self.last_session_id = None  # Track session ID for cleanup
-        
-        # Default working directory - will be overridden with sandbox directory
-        self.cwd = Path(cwd) if cwd else Path.cwd()
         
         # Import auth manager
         from auth import auth_manager, validate_claude_code_auth

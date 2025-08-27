@@ -11,7 +11,6 @@ services:
     environment:
       # Claude CLI Configuration
       - CLAUDE_CLI_PATH=${CLAUDE_CLI_PATH:-claude}
-      - CLAUDE_CWD=${CLAUDE_CWD:-/app}
       # API Configuration
       - PORT=${PORT:-8000}
       - API_KEY=${API_KEY:-}
