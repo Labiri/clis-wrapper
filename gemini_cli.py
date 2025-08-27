@@ -168,24 +168,46 @@ class GeminiCLI:
                 if xml_tool_names:
                     logger.info(f"   Tools: {', '.join(xml_tool_names)}")
                 
-                # Build clearer XML enforcement with examples
+                # Build clearer XML enforcement with examples from configured tools
+                from xml_tools_config import get_known_xml_tools
+                known_tools = get_known_xml_tools()
+                
                 xml_enforcement = (
                     "\n\n🚨 MANDATORY RESPONSE FORMAT 🚨\n"
                     "You MUST wrap your ENTIRE response in XML tags. These are FORMATTING instructions, not tools.\n\n"
-                    "EXAMPLE of correct response format:\n"
-                    "<attempt_completion>\n"
-                    "<result>\n"
-                    "Your actual answer goes here. For example: Red is a primary color.\n"
-                    "</result>\n"
-                    "</attempt_completion>\n\n"
-                    "OR if you need more information:\n"
-                    "<ask_followup_question>\n"
-                    "<question>What specific aspect would you like to know?</question>\n"
-                    "</ask_followup_question>\n\n"
+                )
+                
+                # Add examples based on configured tools
+                if 'attempt_completion' in known_tools:
+                    xml_enforcement += (
+                        "EXAMPLE of correct response format:\n"
+                        "<attempt_completion>\n"
+                        "<result>\n"
+                        "Your actual answer goes here. For example: Red is a primary color.\n"
+                        "</result>\n"
+                        "</attempt_completion>\n\n"
+                    )
+                
+                if 'ask_followup_question' in known_tools:
+                    xml_enforcement += (
+                        "OR if you need more information:\n"
+                        "<ask_followup_question>\n"
+                        "<question>What specific aspect would you like to know?</question>\n"
+                        "</ask_followup_question>\n\n"
+                    )
+                
+                xml_enforcement += (
                     "IMPORTANT:\n"
                     "- These are NOT tools you 'have access to' - they are XML formatting tags\n"
                     "- Think of them like HTML tags - you wrap your content in them\n"
-                    "- Start with <attempt_completion> or <ask_followup_question>\n"
+                )
+                
+                if known_tools:
+                    xml_enforcement += f"- Start with one of: {', '.join([f'<{tool}>' for tool in known_tools])}\n"
+                else:
+                    xml_enforcement += "- Start with an appropriate XML tag\n"
+                
+                xml_enforcement += (
                     "- End with the corresponding closing tag\n"
                     "- Put your actual response content between the tags\n"
                     "- NO text outside the XML tags!"

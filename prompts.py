@@ -137,13 +137,14 @@ class FormatDetector:
             content = str(msg.get("content", "")).lower()
             
             # Enhanced XML tool detection patterns
+            from xml_tools_config import get_known_xml_tools
+            known_tools = get_known_xml_tools()
+            
             tool_patterns = [
                 "tool" in content and ("<" in content or "xml" in content),
-                "attempt_completion" in content,
-                "ask_followup_question" in content,
+                any(tool in content for tool in known_tools),  # Check configured tools
                 "tool uses are formatted" in content,
                 "use this tool" in content and "<" in content,
-                "[error] you did not use a tool" in content,  # Error message from Roo/Cline
                 "xml-style tags" in content,
                 "<actual_tool_name>" in content,  # Example pattern
                 "your response must use" in content and "xml" in content,

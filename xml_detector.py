@@ -122,12 +122,18 @@ class XMLDetector:
                 detected_patterns.append(description)
         
         # Medium confidence indicators (2 points each)
-        medium_patterns = [
-            (r'<attempt_completion>', 2.0, "attempt_completion tool"),
-            (r'<ask_followup_question>', 2.0, "ask_followup_question tool"),
+        # Dynamically build patterns from configured tools
+        from xml_tools_config import get_known_xml_tools
+        
+        medium_patterns = []
+        for tool in get_known_xml_tools():
+            medium_patterns.append((rf'<{re.escape(tool)}>', 2.0, f"{tool} tool"))
+        
+        # Add general tool indicators
+        medium_patterns.extend([
             (r'Use this tool to', 2.0, "Tool usage instructions"),
             (r'Available tools?:', 2.0, "Tool list header"),
-        ]
+        ])
         
         for pattern, points, description in medium_patterns:
             if re.search(pattern, clean_content, re.IGNORECASE):

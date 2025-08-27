@@ -154,14 +154,18 @@ class ClaudeCodeCLI:
                     # Use the first tool name as primary example
                     primary_tool = xml_tool_names[0]
                     
-                    # Build more specific guidance based on common formatting tags
-                    if 'attempt_completion' in xml_tool_names:
+                    # Build more specific guidance based on configured tools
+                    from xml_tools_config import get_known_xml_tools
+                    known_tools = get_known_xml_tools()
+                    
+                    if 'attempt_completion' in known_tools:
                         example_text = (
                             f"\n\nREMINDER: Format your response using XML tags.\n"
                             f"For completing tasks, format as: <attempt_completion>\n<result>your response</result>\n</attempt_completion>\n"
-                            f"For asking questions, format as: <ask_followup_question>\n<question>your question here</question>\n</ask_followup_question>\n"
-                            f"DO NOT use <environment_details>, <task>, or other structural tags - only the response formatting tags above."
                         )
+                        if 'ask_followup_question' in known_tools:
+                            example_text += f"For asking questions, format as: <ask_followup_question>\n<question>your question here</question>\n</ask_followup_question>\n"
+                        example_text += f"DO NOT use <environment_details>, <task>, or other structural tags - only the response formatting tags above."
                     else:
                         example_text = (
                             f"\n\nREMINDER: Your response MUST be formatted with XML tags.\n"
@@ -177,11 +181,12 @@ class ClaudeCodeCLI:
                 tool_instruction = (
                     "\n\nCRITICAL - THIS IS MANDATORY:\n"
                     "1. Your ENTIRE response MUST be formatted using XML tags\n"
-                    "2. Use ONLY these XML formatting tags: <attempt_completion>, <ask_followup_question>, etc.\n"
+                    f"2. Use ONLY these XML formatting tags: {', '.join([f'<{tool}>' for tool in get_known_xml_tools()])}\n" if get_known_xml_tools() else 
+                    "2. Format your response with appropriate XML tags\n"
                     "3. DO NOT use <environment_details>, <task>, <response> or any non-formatting tags\n"
                     "4. Start your response with an opening XML tag and end with the closing tag\n"
                     "5. NO plain text outside the XML tags\n"
-                    "6. For general responses, format as: <attempt_completion><result>...</result></attempt_completion>\n\n"
+                    "6. For general responses, use the appropriate XML formatting tags\n\n"
                     "CLARIFICATION: These XML tags are RESPONSE FORMATTING - NOT Claude tools.\n"
                     "You don't need any SDK tools to use these XML tags. Simply format your text response within them.\n\n"
                     "IMPORTANT: Provide COMPLETE responses - do not truncate or abbreviate."
@@ -236,8 +241,8 @@ class ClaudeCodeCLI:
                     failsafe_enforcement = (
                         "\n\n[FAILSAFE XML ENFORCEMENT]\n"
                         "CRITICAL: You MUST format your response using XML tags.\n"
-                        "Wrap your ENTIRE response in formatting tags like:\n"
-                        "<attempt_completion><result>your response here</result></attempt_completion>\n"
+                        "Wrap your ENTIRE response in formatting tags.\n"
+                        f"Use one of: {', '.join([f'<{tool}>' for tool in get_known_xml_tools()])}\n" if get_known_xml_tools() else ""
                         "DO NOT respond with plain text or markdown!\n"
                         "Remember: These are response formatting tags, NOT SDK tools."
                     )

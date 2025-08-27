@@ -45,6 +45,8 @@ This wrapper is being simplified and optimized specifically for **chat mode oper
 
 ### Key Features
 - **Automatic model routing** - Use `claude-*` or `gemini-*` prefixes
+- **Intelligent XML detection** - Confidence-based scoring avoids false positives
+- **Advanced image support** - Model-specific injection strategies for optimal results
 - **No API keys required** - Uses CLI authentication
 - **Simple setup** - Get running in under 2 minutes
 - **Docker support** - Easy deployment and scaling
@@ -239,6 +241,18 @@ RATE_LIMIT_DEBUG_PER_MINUTE=2
 RATE_LIMIT_AUTH_PER_MINUTE=10
 RATE_LIMIT_SESSION_PER_MINUTE=15
 RATE_LIMIT_HEALTH_PER_MINUTE=30
+
+# XML Detection Configuration
+# Confidence threshold for XML detection (default: 5.0)
+# Higher values = fewer false positives, lower values = more sensitive
+# Range: 1.0-10.0, recommended: 5.0-7.0
+XML_CONFIDENCE_THRESHOLD=5.0
+
+# Known XML tools for detection (comma-separated list)
+# These tool names will be detected in messages to trigger XML format enforcement
+# Leave empty to disable tool-based detection
+# Common tools for Roo/Cline: attempt_completion,ask_followup_question,read_file,write_to_file,run_command
+XML_KNOWN_TOOLS=attempt_completion,ask_followup_question,read_file,write_to_file,run_command,str_replace_editor,search_files,list_files,new_task
 ```
 
 ### API Security Configuration
@@ -901,7 +915,7 @@ Chat mode is ideal for:
 
 ## Multimodal Image Support
 
-The wrapper now provides comprehensive image support, handling both OpenAI-format images and file-based references commonly used by AI coding assistants.
+The wrapper provides comprehensive image support with model-specific optimization, handling both OpenAI-format images and file-based references commonly used by AI coding assistants.
 
 ### Supported Image Formats
 
@@ -937,9 +951,13 @@ The wrapper uses **message boundary detection** to intelligently process only ne
 
 1. **Image Detection**: Automatically detects images in messages (both formats)
 2. **Smart Processing**: Uses message flow analysis to identify new vs. historical images
-3. **Sandbox Saving**: Saves images to sandbox directory for Claude to access
-4. **Tool Enablement**: Conditionally enables Read tool when images are present
-5. **Path Mapping**: Maps placeholders like `[Image #1]` to actual file paths
+3. **Model-Specific Injection**: 
+   - **Claude**: Always uses inline injection for proven reliability
+   - **Gemini**: Flexible approach - system messages for XML scenarios, inline otherwise
+4. **Isolated Analysis**: Each model processes images via isolated CLI calls
+5. **Sandbox Saving**: Saves images to temporary sandbox directory
+6. **Context Integration**: Analysis results injected into conversation context
+7. **Path Mapping**: Maps placeholders like `[Image #1]` to actual file paths
 
 ### Technical Details
 
@@ -968,6 +986,59 @@ response = client.chat.completions.create(
     }]
 )
 ```
+
+## Intelligent XML Tool Format Detection
+
+The wrapper includes sophisticated XML format detection that works intelligently with any AI assistant (Roo, Cline, Cursor, etc.) while avoiding false positives from code discussions.
+
+### How It Works
+
+The system uses **confidence-based scoring** to determine when XML tool format is required:
+
+- **High Confidence Indicators** (3 points each):
+  - Mandatory tool usage directives
+  - XML format specifications
+  - Tool name definitions (`<tool_name>...</tool_name>`)
+  - Specific tool response formats
+
+- **Medium Confidence Indicators** (2 points each):
+  - Known tool names (`attempt_completion`, `ask_followup_question`)
+  - Tool usage instructions
+  - Tool list headers
+
+- **Low Confidence Indicators** (1 point each):
+  - Compound XML tags
+  - Tool/XML keyword mentions
+
+- **Negative Indicators** (subtract points):
+  - File extensions (.xml, .html)
+  - Code discussions about XML
+  - Example contexts
+
+### Smart Features
+
+1. **Code Block Stripping**: Automatically removes code blocks before analysis to prevent false positives
+2. **System Message Bonus**: Gives extra weight to system message instructions
+3. **Configurable Threshold**: Adjust sensitivity via `XML_CONFIDENCE_THRESHOLD`
+4. **Client Agnostic**: Works with any AI assistant that uses XML tools
+
+### Configuration
+
+Set the confidence threshold in your `.env` file:
+
+```env
+# Default: 5.0 (balanced detection)
+# Higher values: Fewer false positives
+# Lower values: More sensitive detection
+XML_CONFIDENCE_THRESHOLD=5.0
+```
+
+### Benefits
+
+- **No False Positives**: Won't trigger on code examples or XML discussions
+- **Automatic Detection**: No manual configuration needed
+- **Universal Compatibility**: Works with Roo, Cline, and any XML-based assistant
+- **Performance**: Minimal overhead with pre-compiled patterns
 
 ## API Endpoints
 

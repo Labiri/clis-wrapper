@@ -252,24 +252,14 @@ class MessageAdapter:
         # (lowercase words, possibly with underscores)
         tool_pattern = r'<([a-z][a-z_]*[a-z]|[a-z])>'
         
-        # Also check for common tool tags we know about
-        content_lower = content.lower()
-        known_tools = [
-            "<attempt_completion>",
-            "<ask_followup_question>",
-            "<new_task>",
-            "<read_file>",
-            "<write_to_file>",
-            "<search_files>",
-            "<list_files>",
-            "<apply_diff>",
-            "<execute_command>",
-            "<switch_mode>",
-            "<update_todo_list>"
-        ]
+        # Also check for common tool tags from configuration
+        from xml_tools_config import get_known_xml_tools
         
-        # Check if any known tools are present
-        has_known_tool = any(tool in content_lower for tool in known_tools)
+        content_lower = content.lower()
+        known_tools = get_known_xml_tools()
+        
+        # Check if any known tools are present (wrap tool names in angle brackets)
+        has_known_tool = any(f"<{tool}>" in content_lower for tool in known_tools)
         
         # Or check if there's any XML-like tool structure
         has_xml_structure = bool(re.search(tool_pattern, content))
