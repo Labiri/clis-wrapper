@@ -109,18 +109,17 @@ class GeminiCLI:
         return filtered_text
     
     def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, requires_xml: bool = False) -> str:
-        """Prepare prompt with system injections based on format detection."""
-        # Apply injections if XML is explicitly required
-        if not requires_xml:
-            # Without XML requirement, return prompt as-is
-            return prompt
-            
+        """Prepare prompt with system injections based on format detection.
+        
+        Always applies sandbox security prompts (since we're always in sandbox mode).
+        Conditionally applies XML formatting prompts based on requires_xml flag.
+        """
         logger.debug(f"Preparing Gemini prompt with injections, requires_xml={requires_xml}")
         
         prompt_parts = []
         final_parts = []
         
-        # Always add sandbox mode prompts (we're always in sandbox mode now)
+        # ALWAYS add sandbox security prompts (we're always in sandbox mode now)
         # Add response reinforcement and sandbox mode prompts
         prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
         prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
@@ -141,6 +140,12 @@ class GeminiCLI:
             "Do not truncate, abbreviate, or cut off your answers. "
             "Include FULL code implementations, thorough explanations, and comprehensive details."
         )
+        
+        # If no XML required, return prompt with just security injections
+        if not requires_xml:
+            # Combine security prompts with original prompt
+            security_enhanced_prompt = "\n\n".join(prompt_parts) + "\n\n" + prompt
+            return security_enhanced_prompt
         
         # Check for XML format requirements
         if messages or requires_xml:

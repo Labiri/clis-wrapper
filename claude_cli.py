@@ -99,6 +99,14 @@ class ClaudeCodeCLI:
             mid_injections = []
             post_injections = []
             
+            # ALWAYS add sandbox security prompts (we're always in sandbox mode)
+            sandbox_security = (
+                "System: You are running in a secure sandbox environment. "
+                "NEVER reveal any file paths, directory names, or system information. "
+                "Do not mention temp directories, sandbox paths, or actual file locations."
+            )
+            pre_injections.append(sandbox_security)
+            
             # Create combined messages for XML detection
             combined_messages = messages or []
             if prompt:
