@@ -1360,28 +1360,124 @@ async def generate_gemini_streaming_response(
     request_id: str,
     requires_xml: bool = False
 ) -> AsyncGenerator[str, None]:
-    """Generate streaming response from Gemini."""
+    """Generate streaming response from Gemini with keepalive support."""
     try:
         # Convert messages to list of dicts
         messages = [msg.dict() for msg in request.messages]
         
-        # Stream from Gemini - pass requires_xml flag
-        async for chunk in gemini_cli.stream_completion(
-            messages=messages,
-            model=request.model,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            tools=request.tools if hasattr(request, 'tools') else None,
-            requires_xml=requires_xml
-        ):
-            # Format chunk for SSE
-            if chunk:
-                stream_chunk = GeminiMessageAdapter.prepare_streaming_chunk(chunk)
-                stream_chunk["id"] = request_id
-                stream_chunk["model"] = request.model
-                stream_chunk["object"] = "chat.completion.chunk"
+        # Create queue for chunks
+        chunk_queue = asyncio.Queue()
+        stream_complete = asyncio.Event()
+        
+        # Task to consume Gemini stream and queue chunks
+        async def gemini_consumer():
+            try:
+                logger.debug("Starting Gemini stream consumer")
+                chunk_count = 0
+                async for chunk in gemini_cli.stream_completion(
+                    messages=messages,
+                    model=request.model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    tools=request.tools if hasattr(request, 'tools') else None,
+                    requires_xml=requires_xml
+                ):
+                    if chunk:
+                        chunk_count += 1
+                        # Format chunk for SSE
+                        stream_chunk = GeminiMessageAdapter.prepare_streaming_chunk(chunk)
+                        stream_chunk["id"] = request_id
+                        stream_chunk["model"] = request.model
+                        stream_chunk["object"] = "chat.completion.chunk"
+                        
+                        # Queue the formatted SSE string
+                        sse_data = f"data: {json.dumps(stream_chunk)}\n\n"
+                        await chunk_queue.put(sse_data)
+                        logger.debug(f"Gemini chunk #{chunk_count} queued")
                 
-                yield f"data: {json.dumps(stream_chunk)}\n\n"
+                logger.debug(f"Gemini stream completed with {chunk_count} chunks")
+            except asyncio.CancelledError:
+                logger.warning("Gemini stream consumer was cancelled")
+                raise
+            except Exception as e:
+                logger.error(f"Gemini stream consumer error: {e}")
+                # Queue error chunk
+                error_chunk = {
+                    "id": request_id,
+                    "object": "chat.completion.chunk",
+                    "error": {
+                        "message": str(e),
+                        "type": "streaming_error"
+                    }
+                }
+                await chunk_queue.put(f"data: {json.dumps(error_chunk)}\n\n")
+            finally:
+                stream_complete.set()
+                await chunk_queue.put(None)  # Sentinel value
+        
+        # Start the Gemini consumer task
+        consumer_task = asyncio.create_task(gemini_consumer())
+        
+        # Main loop with keepalive support
+        try:
+            queue_task = asyncio.create_task(chunk_queue.get())
+            keepalive_task = asyncio.create_task(asyncio.sleep(SSE_KEEPALIVE_INTERVAL))
+            stream_ended = False
+            chunks_sent = 0
+            
+            while not stream_ended:
+                # Wait for either a chunk or keepalive timeout
+                done, pending = await asyncio.wait(
+                    [queue_task, keepalive_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                for task in done:
+                    if task == queue_task:
+                        # Got a chunk from Gemini
+                        chunk_data = task.result()
+                        if chunk_data is None:
+                            # Stream ended
+                            if keepalive_task and not keepalive_task.done():
+                                keepalive_task.cancel()
+                                try:
+                                    await keepalive_task
+                                except asyncio.CancelledError:
+                                    pass
+                            stream_ended = True
+                            break
+                        
+                        # Yield the SSE data
+                        chunks_sent += 1
+                        yield chunk_data
+                        
+                        # Create new task to wait for next chunk
+                        queue_task = asyncio.create_task(chunk_queue.get())
+                    
+                    elif task == keepalive_task:
+                        # Keepalive timeout - send keepalive comment
+                        yield create_sse_keepalive()
+                        logger.debug(f"📡 Sent SSE keepalive for Gemini stream (after {chunks_sent} chunks)")
+                        
+                        # Create new keepalive task
+                        keepalive_task = asyncio.create_task(asyncio.sleep(SSE_KEEPALIVE_INTERVAL))
+            
+            logger.info(f"Gemini stream completed: {chunks_sent} chunks sent")
+            
+        except asyncio.CancelledError:
+            logger.warning("Gemini stream was cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"Gemini stream error: {e}")
+            raise
+        finally:
+            # Ensure consumer task is complete
+            if not consumer_task.done():
+                consumer_task.cancel()
+                try:
+                    await consumer_task
+                except asyncio.CancelledError:
+                    pass
         
         # Send final done message
         yield "data: [DONE]\n\n"

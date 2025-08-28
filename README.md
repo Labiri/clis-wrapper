@@ -785,6 +785,21 @@ View all available models and their variants:
 curl http://localhost:8000/v1/models
 ```
 
+## Web Search Capabilities
+
+Both Claude and Gemini models have built-in web search functionality:
+
+- **Claude Models**: Web search via WebSearch and WebFetch tools (enabled in chat mode)
+- **Gemini Models**: Native web search capability built into the Gemini CLI
+
+This allows both models to:
+- Search for current information and events
+- Fetch content from web pages
+- Access real-time data (weather, stock prices, etc.)
+- Research topics beyond their training data cutoff
+
+Note: Web search works automatically - just ask questions that require current information!
+
 ## Conversation Management
 
 The wrapper operates in a **stateless mode** where each request is independent, just like the standard OpenAI API. For conversation continuity, clients should manage conversation state by including the full conversation history in each request's messages array.
@@ -911,7 +926,7 @@ response = client.chat.completions.create(
 |---------|---------|
 | File Operations | Blocked |
 | System Commands | Blocked |
-| Web Tools | Available (WebSearch, WebFetch) |
+| Web Tools | Claude: WebSearch, WebFetch; Gemini: Native web search |
 | Sessions | Disabled (stateless) |
 | Working Directory | Temporary sandbox |
 | Environment | Sanitized environment |
@@ -1074,10 +1089,10 @@ XML_CONFIDENCE_THRESHOLD=5.0
 - **Multiple responses** (`n > 1`) not supported
 
 ### Planned Enhancements 
-- [ ] **Tool configuration** - allowed/disallowed tools endpoints  
-- [ ] **OpenAI parameter mapping** - temperature, top_p, max_tokens support
-- [ ] **Enhanced streaming** - better chunk handling
-- [ ] **MCP integration** - Model Context Protocol server support
+- [ ] **Multiple accounts** - Basic load balancer for distributing requests across accounts
+- [ ] **Codex CLI integration** - Add support for Codex CLI models
+- [ ] **Qwen CLI integration** - Add support for Qwen CLI models  
+- [ ] **LLM ensemble / Council synthetic model endpoint** - Combine multiple models for enhanced responses
 
 ### Recent Improvements
 - **Multimodal Images**: Full support for images in both OpenAI and file-based formats
