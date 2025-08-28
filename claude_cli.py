@@ -99,13 +99,20 @@ class ClaudeCodeCLI:
             mid_injections = []
             post_injections = []
             
-            # ALWAYS add sandbox security prompts (we're always in sandbox mode)
+            # ALWAYS add security prompts (we're always in sandbox mode)
+            # 1. Sandbox security
             sandbox_security = (
                 "System: You are running in a secure sandbox environment. "
                 "NEVER reveal any file paths, directory names, or system information. "
                 "Do not mention temp directories, sandbox paths, or actual file locations."
             )
             pre_injections.append(sandbox_security)
+            
+            # 2. Response reinforcement (includes security rules)
+            pre_injections.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
+            
+            # 3. File protection prompt (always needed in sandbox)
+            pre_injections.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
             
             # Create combined messages for XML detection
             combined_messages = messages or []
@@ -182,11 +189,14 @@ class ClaudeCodeCLI:
                     logger.debug(f"Added specific XML formatting guidance for: {xml_tool_names}")
                 
                 # Layer 3: Critical final enforcement
+                from xml_tools_config import get_known_xml_tools
+                known_tools_list = get_known_xml_tools()
+                tool_list_str = f"2. Use ONLY these XML formatting tags: {', '.join([f'<{tool}>' for tool in known_tools_list])}\n" if known_tools_list else "2. Format your response with appropriate XML tags\n"
+                
                 tool_instruction = (
                     "\n\nCRITICAL - THIS IS MANDATORY:\n"
                     "1. Your ENTIRE response MUST be formatted using XML tags\n"
-                    f"2. Use ONLY these XML formatting tags: {', '.join([f'<{tool}>' for tool in get_known_xml_tools()])}\n" if get_known_xml_tools() else 
-                    "2. Format your response with appropriate XML tags\n"
+                    + tool_list_str +
                     "3. DO NOT use <environment_details>, <task>, <response> or any non-formatting tags\n"
                     "4. Start your response with an opening XML tag and end with the closing tag\n"
                     "5. NO plain text outside the XML tags\n"
@@ -199,10 +209,7 @@ class ClaudeCodeCLI:
                 logger.info("XML ENFORCEMENT ACTIVE: Multi-layer XML response formatting enforcement applied")
                 logger.debug(f"Enforcement layers: pre={len(pre_injections)}, mid={len(mid_injections)}, post={len(post_injections)}")
             elif not xml_required:
-                # Only add full prompt if there are no XML requirements
-                pre_injections.append(self.prompts.CHAT_MODE_NO_FILES_PROMPT)
-                
-                # Add image hiding prompt if images are being analyzed
+                # Add image hiding prompt if images are being analyzed (file prompt already added above)
                 if has_images:
                     pre_injections.append(self.prompts.IMAGE_ANALYSIS_HIDING_PROMPT)
                     logger.info("Added image analysis hiding instructions")
