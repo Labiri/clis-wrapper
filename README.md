@@ -197,6 +197,10 @@ Edit the `.env` file:
 # Claude CLI Configuration
 CLAUDE_CLI_PATH=claude
 
+# Gemini CLI Configuration  
+GEMINI_CLI_PATH=gemini
+GEMINI_MODEL=gemini-2.5-pro  # Default model for Gemini
+
 # API Configuration
 # If API_KEY is not set, server will prompt for interactive API key protection on startup
 # Leave commented out to enable interactive prompt, or uncomment to use a fixed API key
@@ -953,7 +957,12 @@ The wrapper uses **message boundary detection** to intelligently process only ne
 2. **Smart Processing**: Uses message flow analysis to identify new vs. historical images
 3. **Model-Specific Injection**: 
    - **Claude**: Always uses inline injection for proven reliability
-   - **Gemini**: Flexible approach - system messages for XML scenarios, inline otherwise
+   - **Gemini**: 
+     - Uses sandbox mode (`-s` flag) for reliable file access
+     - Includes file validation before processing
+     - Implements retry logic for transient failures  
+     - Extracts relevant details for contextual questions rather than attempting direct answers
+     - System messages for XML scenarios, inline otherwise
 4. **Isolated Analysis**: Each model processes images via isolated CLI calls
 5. **Sandbox Saving**: Saves images to temporary sandbox directory
 6. **Context Integration**: Analysis results injected into conversation context
