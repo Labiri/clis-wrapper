@@ -10,6 +10,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import uuid
@@ -242,11 +243,25 @@ class ImageAnalysisOrchestrator:
             # Use only filenames since Gemini runs in the sandbox directory
             filenames = [Path(path).name for path in image_paths]
             
+            # Verify image files exist and are readable before calling Gemini
+            for filename in filenames:
+                file_path = Path(sandbox_dir) / filename
+                if not file_path.exists():
+                    logger.error(f"Image file not found: {file_path}")
+                    return None
+                if not file_path.is_file():
+                    logger.error(f"Not a file: {file_path}")
+                    return None
+                # Check file size to ensure it's not empty
+                if file_path.stat().st_size == 0:
+                    logger.error(f"Image file is empty: {file_path}")
+                    return None
+            
             # Add image references using @ syntax with relative filenames
             for filename in filenames:
                 prompt_parts.append(f"@{filename}")
             
-            # Add analysis request - keep it simple for Gemini
+            # Add analysis request - extract details relevant to the user's question
             if user_prompt:
                 # Clean up the prompt if it contains complex instructions
                 if "[ERROR]" in user_prompt or "tool" in user_prompt.lower():
@@ -256,44 +271,78 @@ class ImageAnalysisOrchestrator:
                     # For very long prompts, just ask for description
                     prompt_parts.append("Please describe this image in detail.")
                 else:
-                    # For simple prompts, use them
-                    prompt_parts.append(f"Analyze this image and answer: {user_prompt}")
+                    # For normal prompts, ask to describe relevant details (not answer directly)
+                    prompt_parts.append(f"Examine this image carefully and describe any details that might be relevant to the following question (but don't answer the question itself): {user_prompt}. Focus on describing any text, UI elements, timestamps, numbers, or information visible that relates to: {user_prompt}")
             else:
                 prompt_parts.append("Please analyze and describe this image in detail.")
             
             analysis_prompt = " ".join(prompt_parts)
             
-            # Build Gemini CLI command (no -q flag, use stdin)
+            # Build Gemini CLI command with sandbox flag for proper file access
             cmd = [
-                self.gemini_cli_path
+                self.gemini_cli_path,
+                '-s'  # Enable sandbox mode for proper file access
             ]
             
-            logger.info(f"Running Gemini CLI for image analysis")
+            logger.info(f"Running Gemini CLI for image analysis with sandbox mode")
             logger.debug(f"Prompt: {analysis_prompt[:200]}...")
             
-            # Run the command with prompt via stdin
-            result = subprocess.run(
-                cmd,
-                input=analysis_prompt,  # Send prompt via stdin
-                capture_output=True,
-                text=True,
-                cwd=sandbox_dir,
-                timeout=60  # 60 second timeout
-            )
+            # Try up to 2 times to handle transient file access issues
+            for attempt in range(2):
+                # Run the command with prompt via stdin
+                result = subprocess.run(
+                    cmd,
+                    input=analysis_prompt,  # Send prompt via stdin
+                    capture_output=True,
+                    text=True,
+                    cwd=sandbox_dir,
+                    timeout=60  # 60 second timeout
+                )
+                
+                # Check for file access errors in stderr
+                if result.stderr:
+                    stderr_lower = result.stderr.lower()
+                    if any(err in stderr_lower for err in ['could not', 'cannot find', 'no such file', 'permission denied']):
+                        logger.error(f"Gemini file access error: {result.stderr}")
+                        if attempt == 0:
+                            logger.warning("File access error on first attempt, retrying...")
+                            time.sleep(0.5)  # Brief delay before retry
+                            continue
+                        return None
+                
+                if result.returncode != 0:
+                    logger.error(f"Gemini CLI failed with code {result.returncode}")
+                    logger.error(f"Stderr: {result.stderr}")
+                    if attempt == 0:
+                        logger.warning("First attempt failed, retrying...")
+                        time.sleep(0.5)  # Brief delay before retry
+                        continue
+                    return None
+                
+                analysis = result.stdout.strip()
+                if analysis:
+                    # Check if the analysis seems valid (not a hallucination)
+                    # Hallucinations often contain unrelated technical content
+                    if len(analysis) > 500 and "github" in analysis.lower() and user_prompt and "github" not in user_prompt.lower():
+                        logger.warning(f"Suspicious analysis detected (possible hallucination), attempt {attempt + 1}")
+                        if attempt == 0:
+                            logger.warning("Retrying with fresh subprocess...")
+                            time.sleep(0.5)
+                            continue
+                    
+                    logger.info(f"Successfully analyzed images with Gemini ({len(analysis)} chars) on attempt {attempt + 1}")
+                    logger.debug(f"Analysis preview: {analysis[:200]}...")
+                    return analysis
+                else:
+                    logger.warning(f"Gemini returned empty analysis on attempt {attempt + 1}")
+                    if attempt == 0:
+                        time.sleep(0.5)
+                        continue
+                    return None
             
-            if result.returncode != 0:
-                logger.error(f"Gemini CLI failed with code {result.returncode}")
-                logger.error(f"Stderr: {result.stderr}")
-                return None
-            
-            analysis = result.stdout.strip()
-            if analysis:
-                logger.info(f"Successfully analyzed images with Gemini ({len(analysis)} chars)")
-                logger.debug(f"Analysis preview: {analysis[:200]}...")
-                return analysis
-            else:
-                logger.warning("Gemini returned empty analysis")
-                return None
+            # All attempts failed
+            logger.error("All attempts to analyze image with Gemini failed")
+            return None
                 
         except subprocess.TimeoutExpired:
             logger.error("Gemini CLI timed out during image analysis")
