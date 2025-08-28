@@ -78,16 +78,33 @@ This wrapper is being simplified and optimized specifically for **chat mode oper
 
 Get started in under 2 minutes:
 
+### Prerequisites
+
+- **Python 3.10+** - Required for the server
+- **Poetry** - For dependency management
+  ```bash
+  curl -sSL https://install.python-poetry.org | python3 -
+  ```
+
 ### Setup for Claude Code
 
 ```bash
 # 1. Install Claude Code CLI (if not already installed)
 npm install -g @anthropic-ai/claude-code
 
-# 2. Authenticate (choose one method)
-claude auth login  # Recommended for development
-# OR set: export ANTHROPIC_API_KEY=your-api-key
+# 2. Authenticate (choose one method):
 ```
+
+**Authentication Options:**
+- **Option A**: Authenticate via CLI (Recommended for development)
+  ```bash
+  claude auth login
+  ```
+- **Option B**: Set environment variable
+  ```bash
+  export ANTHROPIC_API_KEY=your-api-key
+  ```
+- **Option C**: Use AWS Bedrock or Google Vertex AI (see Configuration section)
 
 ### Setup for Gemini
 
@@ -114,34 +131,7 @@ poetry run uvicorn main:app --reload --port 8000
 poetry run python test_endpoints.py
 ```
 
-**That's it!** Your OpenAI-compatible Claude Code API is running on `http://localhost:8000`
-
-## Prerequisites
-
-1. **Claude Code CLI**: Install Claude Code CLI
-   ```bash
-   # Install Claude Code (follow Anthropic's official guide)
-   npm install -g @anthropic-ai/claude-code
-   ```
-
-2. **Authentication**: Choose one method:
-   - **Option A**: Authenticate via CLI (Recommended for development)
-     ```bash
-     claude auth login
-     ```
-   - **Option B**: Set environment variable
-     ```bash
-     export ANTHROPIC_API_KEY=your-api-key
-     ```
-   - **Option C**: Use AWS Bedrock or Google Vertex AI (see Configuration section)
-
-3. **Python 3.10+**: Required for the server
-
-4. **Poetry**: For dependency management
-   ```bash
-   # Install Poetry (if not already installed)
-   curl -sSL https://install.python-poetry.org | python3 -
-   ```
+**That's it!** Your OpenAI-compatible API is running on `http://localhost:8000`
 
 ## Installation
 
@@ -169,25 +159,26 @@ poetry run python test_endpoints.py
 The wrapper automatically routes requests based on the model name:
 
 ### Claude Models (prefix: `claude-*`)
-- `claude-3-5-sonnet-20241022` - Latest Sonnet model
-- `claude-3-5-haiku-20241022` - Fast, efficient model
-- `claude-opus-4-1-20250805` - Most capable model
+- `claude-opus-4-1-20250805` - Most capable model (latest Opus 4.1)
+- `claude-opus-4-20250514` - Claude Opus 4 - world's best coding model
+- `claude-sonnet-4-20250514` - Claude Sonnet 4 - superior coding and reasoning
+- `claude-3-7-sonnet-20250219` - Claude 3.7 Sonnet - hybrid reasoning model
+- `claude-3-5-sonnet-20241022` - Previous generation Sonnet
 - And all other Claude models available in your CLI
 
 ### Gemini Models (prefix: `gemini-*`)
-- `gemini-1.5-flash` - Fast, efficient model
-- `gemini-1.5-pro` - Balanced performance
-- `gemini-1.0-pro` - Stable production model
-- `gemini-2.0-flash-exp` - Experimental features
+- `gemini-2.5-pro` - Most advanced thinking model (default)
+- `gemini-2.5-flash` - Fast, efficient model with thinking capabilities
 
 ### Progress Indicator Suffixes
 Both Claude and Gemini models support progress indicator control:
-- `-chat` - Standard mode (no progress markers)
-- `-chat-progress` - Standard mode with progress indicators
+- Standard mode (default) - No suffix needed, no progress markers
+- `-progress` - Adds streaming progress indicators
 
 Examples:
-- `claude-3-5-sonnet-20241022-chat`
-- `gemini-1.5-flash-chat-progress`
+- `claude-opus-4-1-20250805` (standard mode)
+- `claude-opus-4-1-20250805-progress` (with progress indicators)
+- `gemini-2.5-flash-progress` (with progress indicators)
 
 ## Configuration
 
@@ -215,9 +206,9 @@ CORS_ORIGINS=["*"]
 
 # Progress Indicator Configuration
 # Progress indicators are controlled per-request by using model names with suffixes:
-# -chat: Standard mode (no progress markers)
-# -chat-progress: Standard mode with streaming progress indicators
-# Example: claude-3-5-sonnet-20241022-chat-progress
+# Standard mode (default): No suffix needed (no progress markers)
+# -progress: Adds streaming progress indicators
+# Example: claude-opus-4-1-20250805-progress
 
 # Session Cleanup
 # Set to false to disable automatic Claude Code session cleanup
@@ -302,13 +293,13 @@ poetry run python main.py
 
 Control streaming progress indicators through model name suffixes:
 
-- **With progress markers** (`model-name-chat-progress`)
+- **Without progress markers** (default - no suffix needed)
+  - **IMPORTANT**: Only streams the final assistant response - all intermediate content is filtered out
+
+- **With progress markers** (`model-name-progress`)
   - Shows initial hourglass (⏳) followed by rotating circles (◐ ◓ ◑ ◒) with dots
   - Uses exponential backoff to avoid being too chatty
   - Perfect for user-facing applications where visual feedback is important
-
-- **Without progress markers** (`model-name-chat`)
-  - **IMPORTANT**: Only streams the final assistant response - all intermediate content is filtered out
   - Completely removes:
     - Tool use messages and results
     - Intermediate reasoning steps
@@ -379,7 +370,7 @@ RATE_LIMIT_HEALTH_PER_MINUTE=30
 1. Verify Claude Code is installed and working:
    ```bash
    claude --version
-   claude --print --model claude-3-5-haiku-20241022 "Hello"  # Test with fastest model
+   claude --print --model claude-3-5-haiku-20241022 "Hello"  # Test with fast model
    ```
 
 2. Start the server:
@@ -400,9 +391,9 @@ RATE_LIMIT_HEALTH_PER_MINUTE=30
    - Specify custom port: `poetry run python main.py 9000`
    - Set in environment: `PORT=9000 poetry run python main.py`
 
-## Docker Setup Guide for Claude Code OpenAI Wrapper
+## Docker Setup Guide
 
-This guide provides a comprehensive overview of building, running, and configuring a Docker container for the Claude Code OpenAI Wrapper. Docker enables isolated, portable, and reproducible deployments of the wrapper, which acts as an OpenAI-compatible API server routing requests to Anthropic's Claude models via the official Claude Code Python SDK (v0.0.14+). This setup supports authentication methods like Claude subscriptions (e.g., Max plan via OAuth for fixed-cost quotas), direct API keys, AWS Bedrock, or Google Vertex AI.
+This guide provides a comprehensive overview of building, running, and configuring a Docker container for the Multi-AI CLI OpenAI Wrapper. Docker enables isolated, portable, and reproducible deployments of the wrapper, which acts as an OpenAI-compatible API server routing requests to both Anthropic's Claude models and Google's Gemini models. This setup supports authentication methods like Claude subscriptions (e.g., Max plan via OAuth for fixed-cost quotas), direct API keys, AWS Bedrock, Google Vertex AI, and Gemini CLI authentication.
 
 By containerizing the application, you can run it locally for development, deploy it to remote servers or cloud platforms, and customize behavior through environment variables and volumes. This guide assumes you have already cloned the repository and have the `Dockerfile` in the root directory. For general repository setup (e.g., Claude Code CLI authentication), refer to the sections above.
 
@@ -493,6 +484,9 @@ services:
     environment:
       # Claude CLI Configuration
       - CLAUDE_CLI_PATH=${CLAUDE_CLI_PATH:-claude}
+      # Gemini CLI Configuration
+      - GEMINI_CLI_PATH=${GEMINI_CLI_PATH:-gemini}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-pro}
       # API Configuration
       - PORT=${PORT:-8000}
       - API_KEY=${API_KEY:-}
@@ -500,11 +494,17 @@ services:
       - MAX_TIMEOUT=${MAX_TIMEOUT:-600000}
       # CORS Configuration
       - CORS_ORIGINS=${CORS_ORIGINS:-["*"]}
-      # Chat Mode Session Cleanup Configuration
-      - CHAT_MODE_CLEANUP_SESSIONS=${CHAT_MODE_CLEANUP_SESSIONS:-true}
-      - CHAT_MODE_CLEANUP_DELAY_MINUTES=${CHAT_MODE_CLEANUP_DELAY_MINUTES:-720}
+      # Logging Configuration
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+      - VERBOSE=${VERBOSE:-false}
+      # Session Cleanup Configuration
+      - CLEANUP_SESSIONS=${CLEANUP_SESSIONS:-true}
+      - CLEANUP_DELAY_MINUTES=${CLEANUP_DELAY_MINUTES:-720}
       # SSE Keep-alive
       - SSE_KEEPALIVE_INTERVAL=${SSE_KEEPALIVE_INTERVAL:-30}
+      # XML Detection Configuration
+      - XML_CONFIDENCE_THRESHOLD=${XML_CONFIDENCE_THRESHOLD:-5.0}
+      - XML_KNOWN_TOOLS=${XML_KNOWN_TOOLS:-attempt_completion,ask_followup_question,read_file,write_to_file,run_command,str_replace_editor,search_files,list_files,new_task,apply_diff,execute_command,switch_mode,update_todo_list}
       # Rate Limiting Configuration
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
       - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-30}
@@ -513,8 +513,9 @@ services:
       - RATE_LIMIT_AUTH_PER_MINUTE=${RATE_LIMIT_AUTH_PER_MINUTE:-10}
       - RATE_LIMIT_SESSION_PER_MINUTE=${RATE_LIMIT_SESSION_PER_MINUTE:-15}
       - RATE_LIMIT_HEALTH_PER_MINUTE=${RATE_LIMIT_HEALTH_PER_MINUTE:-30}
-    # Dev example with hot reload - uncomment the line below and comment out the default CMD in Dockerfile
-    # command: ["poetry", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # Production mode example - uncomment the line below to run without hot reload
+    # command: ["poetry", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Note: The default Dockerfile CMD includes --reload for development mode
     restart: unless-stopped
 ```
 - Run: `docker-compose up -d` (builds if needed, runs detached).
@@ -533,26 +534,31 @@ Customize the container's behavior through environment variables, volumes, and r
 ### Environment Variables
 Env vars override defaults and can be set at runtime with `-e` flags or in `docker-compose.yml` under `environment`. They control auth, server settings, and SDK behavior.
 
-- **Core Server Settings**:
+- **Claude Configuration**:
   - `CLAUDE_CLI_PATH=claude`: Path to Claude CLI executable (default: claude).
-  - `PORT=9000`: Changes the internal listening port (default: 8000; update port mapping accordingly).
-  - `MAX_TIMEOUT=600000`: Sets the request timeout in milliseconds (default: 600000 = 10 minutes; increase for complex Claude queries).
-  - `CORS_ORIGINS=["*"]`: CORS allowed origins (default: ["*"] allows all origins).
 
-- **Authentication and Providers**:
-  - `ANTHROPIC_API_KEY=sk-your-key`: Enables direct API key auth (overrides subscription; generate at console.anthropic.com).
-  - `CLAUDE_CODE_USE_VERTEX=true`: Switches to Google Vertex AI (requires additional vars like `GOOGLE_APPLICATION_CREDENTIALS=/path/to/creds.json`—mount the file as a volume).
-  - `CLAUDE_CODE_USE_BEDROCK=true`: Enables AWS Bedrock (set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, etc.).
-  - `CLAUDE_USE_SUBSCRIPTION=true`: Forces subscription mode (default behavior; set to ensure no API fallback).
+- **Gemini Configuration**:
+  - `GEMINI_CLI_PATH=gemini`: Path to Gemini CLI executable (default: gemini).
+  - `GEMINI_MODEL=gemini-2.5-pro`: Default Gemini model (default: gemini-2.5-pro).
 
-- **Security and API Protection**:
-  - `API_KEY=your-key`: Single API key required for endpoint access (clients must send `Authorization: Bearer <key>`). Leave unset for interactive prompt.
-  - Chat mode is activated per-request by using model names with suffixes:
-    - `-chat`: Enable chat mode without progress markers
-    - `-chat-progress`: Enable chat mode with streaming progress indicators
-  - `CHAT_MODE_CLEANUP_SESSIONS=true`: Enable automatic Claude Code session cleanup in chat mode (default: true).
-  - `CHAT_MODE_CLEANUP_DELAY_MINUTES=720`: Minutes to wait before cleanup (default: 720 = 12 hours). Set to 0 for immediate cleanup.
-  - `SSE_KEEPALIVE_INTERVAL=30`: Interval in seconds for sending SSE keepalive comments to prevent connection timeouts (default: 30).
+- **General Configuration**:
+  - `DEBUG_MODE=false`: Enable debug logging (default: false).
+  - `VERBOSE=false`: Enable verbose logging (default: false).
+  - `SHOW_PROGRESS_MARKERS=true`: Show progress indicators during streaming (default: true).
+  - `PROGRESS_STYLE=text`: Progress indicator style: text, spinner, ascii, minimal (default: text).
+  - `CLEANUP_SESSIONS=true`: Cleanup provider sessions after requests (default: true).
+  - `CLEANUP_DELAY_MINUTES=720`: Minutes to wait before cleanup (default: 720 = 12 hours).
+  - `API_KEY`: API key for endpoint protection (leave unset for interactive prompt).
+  - `PORT=8000`: Server port (default: 8000).
+  - `CORS_ORIGINS=["*"]`: Allowed CORS origins (default: ["*"]).
+  - `MAX_TIMEOUT=600000`: Maximum request timeout in ms (default: 600000).
+
+- **SSE Configuration**:
+  - `SSE_KEEPALIVE_INTERVAL=30`: Interval in seconds for sending SSE keepalive comments (default: 30).
+
+- **XML Detection Configuration**:
+  - `XML_CONFIDENCE_THRESHOLD=5.0`: Confidence threshold for XML detection (default: 5.0).
+  - `XML_KNOWN_TOOLS`: Known XML tools for detection (comma-separated list).
 
 - **Rate Limiting Configuration**:
   - `RATE_LIMIT_ENABLED=true`: Enable rate limiting for all endpoints (default: true).
@@ -563,10 +569,10 @@ Env vars override defaults and can be set at runtime with `-e` flags or in `dock
   - `RATE_LIMIT_SESSION_PER_MINUTE=15`: Session endpoint rate limit per minute (default: 15).
   - `RATE_LIMIT_HEALTH_PER_MINUTE=30`: Health check rate limit per minute (default: 30).
 
-- **Custom/Advanced Vars**:
-  - `MAX_THINKING_TOKENS=4096`: Custom token budget for extended thinking (if implemented in code; e.g., for `budget_tokens` in SDK calls).
-  - `ANTHROPIC_CUSTOM_HEADERS='{"anthropic-beta": "extended-thinking-2024-10-01"}'`: JSON string for custom SDK headers (parse in `main.py` if needed).
-  - Add more by modifying `main.py` to read `os.getenv('YOUR_VAR')` and rebuild.
+- **Authentication and Providers**:
+  - `ANTHROPIC_API_KEY=sk-your-key`: Enables direct API key auth (generate at console.anthropic.com).
+  - `CLAUDE_CODE_USE_VERTEX=true`: Switches to Google Vertex AI (requires additional configuration).
+  - `CLAUDE_CODE_USE_BEDROCK=true`: Enables AWS Bedrock (requires AWS credentials).
 
 Example with Env Vars:
 ```bash
@@ -641,7 +647,7 @@ Validate setup post-run:
    ```bash
    curl http://localhost:8000/v1/chat/completions \
      -H "Content-Type: application/json" \
-     -d '{"model": "claude-3-5-sonnet-20240620", "messages": [{"role": "user", "content": "Hello"}]}'
+     -d '{"model": "claude-opus-4-1-20250805", "messages": [{"role": "user", "content": "Hello"}]}'
    ```
 4. Tool/Subscription Test: Send multiple requests; check logs for auth mode.
 5. Remote Test: From another machine, curl the server's IP/port.
@@ -670,7 +676,7 @@ Report issues on GitHub with logs/image tag/OS details.
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-3-5-sonnet-20241022",
+    "model": "claude-opus-4-1-20250805",
     "messages": [
       {"role": "user", "content": "What is 2 + 2?"}
     ]
@@ -680,7 +686,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-1.5-flash",
+    "model": "gemini-2.5-flash",
     "messages": [
       {"role": "user", "content": "What is 2 + 2?"}
     ]
@@ -691,7 +697,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-generated-api-key" \
   -d '{
-    "model": "claude-3-5-sonnet-20241022",
+    "model": "claude-sonnet-4-20250514",
     "messages": [
       {"role": "user", "content": "Write a Python hello world script"}
     ],
@@ -715,7 +721,7 @@ client = OpenAI(
 
 # Using Claude model
 response = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022",
+    model="claude-opus-4-1-20250805",
     messages=[
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "What files are in the current directory?"}
@@ -726,7 +732,7 @@ print(response.choices[0].message.content)
 
 # Using Gemini model
 response = client.chat.completions.create(
-    model="gemini-1.5-flash",
+    model="gemini-2.5-pro",
     messages=[
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Explain quantum computing in simple terms."}
@@ -740,9 +746,9 @@ print(response.choices[0].message.content)
 print(f"Cost: ${response.usage.total_tokens * 0.000003:.6f}")  # Real cost tracking
 print(f"Tokens: {response.usage.total_tokens} ({response.usage.prompt_tokens} + {response.usage.completion_tokens})")
 
-# Streaming
+# Streaming with progress indicators
 stream = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022",
+    model="claude-sonnet-4-20250514-progress",
     messages=[
         {"role": "user", "content": "Explain quantum computing"}
     ],
@@ -756,20 +762,23 @@ for chunk in stream:
 
 ## Supported Models
 
-The wrapper dynamically discovers available models from the Claude CLI at startup. Models are automatically extracted from the CLI binary and cached for 24 hours.
+The wrapper dynamically discovers available models from the Claude and Gemini CLIs at startup. Models are automatically extracted and cached for 24 hours.
 
-Currently available models (auto-discovered):
-- `claude-sonnet-4-20250514` (Recommended)
-- `claude-opus-4-20250514`
-- `claude-opus-4-1-20250805`
-- `claude-3-7-sonnet-20250219`
-- `claude-3-5-sonnet-20241022`
-- `claude-3-5-haiku-20241022`
-- `claude-3-sonnet-20240229`
+### Claude Models (auto-discovered):
+- `claude-opus-4-1-20250805` - Most capable model (Opus 4.1, August 2025)
+- `claude-opus-4-20250514` - World's best coding model (May 2025)
+- `claude-sonnet-4-20250514` - Superior coding and reasoning (May 2025)
+- `claude-3-7-sonnet-20250219` - Hybrid reasoning model (February 2025)
+- `claude-3-5-sonnet-20241022` - Previous generation
+- `claude-3-5-haiku-20241022` - Fast, efficient model
 
-The model parameter is passed to Claude Code via the `--model` flag. Each model also has two chat mode variants:
-- `{model}-chat` - Chat mode without progress markers
-- `{model}-chat-progress` - Chat mode with streaming progress indicators
+### Gemini Models:
+- `gemini-2.5-pro` - Most advanced thinking model (default)
+- `gemini-2.5-flash` - Fast model with thinking capabilities
+
+The model parameter is passed directly to the appropriate CLI. Each model also supports:
+- Standard mode (default) - No suffix needed
+- `{model}-progress` - With streaming progress indicators
 
 View all available models and their variants:
 ```bash
@@ -866,19 +875,19 @@ client = openai.OpenAI(
 
 # Standard secure operation
 response = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022",
+    model="claude-opus-4-1-20250805",
     messages=[{"role": "user", "content": "Explain quantum computing"}]
 )
 
 # With progress markers for user feedback
 response = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022-chat-progress",
+    model="claude-opus-4-1-20250805-progress",
     messages=[{"role": "user", "content": "Explain quantum computing"}]
 )
 
 # Simple chat request - runs in complete isolation
 response = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022",
+    model="claude-sonnet-4-20250514",
     messages=[
         {"role": "user", "content": "Write a Python function to calculate fibonacci numbers"}
     ]
@@ -887,13 +896,13 @@ response = client.chat.completions.create(
 
 # XML tool format automatically detected and supported
 response = client.chat.completions.create(
-    model="claude-3-5-sonnet-20241022",
+    model="gemini-2.5-pro",
     messages=[
         {"role": "system", "content": "Tool uses are formatted using XML-style tags..."},
         {"role": "user", "content": "Search for information about Python asyncio"}
     ]
 )
-# Claude will use the XML format if provided by the client
+# The model will use the XML format if provided by the client
 ```
 
 ### Secure Design
@@ -985,7 +994,7 @@ client = openai.OpenAI(base_url="http://localhost:8000/v1", api_key="dummy")
 
 # Send an image for analysis
 response = client.chat.completions.create(
-    model="claude-3-5-sonnet-latest-chat",
+    model="claude-opus-4-1-20250805",
     messages=[{
         "role": "user",
         "content": [

@@ -16,6 +16,9 @@ ENV PATH="/root/.local/bin:${PATH}"
 # Install Claude Code CLI globally (for SDK compatibility)
 RUN npm install -g @anthropic-ai/claude-code
 
+# Install Gemini CLI globally
+RUN npm install -g @google/gemini-cli
+
 # Copy the app code
 COPY . /app
 
