@@ -108,31 +108,69 @@ class GeminiCLI:
             
         return filtered_text
     
+    def _has_image_analysis_context(self, messages: Optional[List[Dict]]) -> bool:
+        """Check if messages contain image analysis context.
+        
+        This indicates that images have already been processed by the
+        ImageAnalysisOrchestrator and we should use relaxed security prompts.
+        """
+        if not messages:
+            return False
+        
+        for msg in messages:
+            content = msg.get('content', '')
+            # Check for the specific marker used by ImageAnalysisOrchestrator
+            if '[Image Analysis Context:' in str(content):
+                logger.debug("Found image analysis context marker in messages")
+                return True
+            # Also check role=system messages that might contain analysis
+            if msg.get('role') == 'system' and 'image analysis' in str(content).lower():
+                logger.debug("Found image analysis in system message")
+                return True
+        
+        return False
+    
     def _prepare_prompt_with_injections(self, prompt: str, messages: Optional[List[Dict]] = None, requires_xml: bool = False) -> str:
         """Prepare prompt with system injections based on format detection.
         
         Always applies sandbox security prompts (since we're always in sandbox mode).
         Conditionally applies XML formatting prompts based on requires_xml flag.
+        Special handling for image analysis context to allow appropriate responses.
         """
         logger.debug(f"Preparing Gemini prompt with injections, requires_xml={requires_xml}")
+        
+        # Check for image analysis context in messages
+        has_image_context = self._has_image_analysis_context(messages)
+        if has_image_context:
+            logger.info("Detected image analysis context in messages, using modified security prompts")
         
         prompt_parts = []
         final_parts = []
         
-        # ALWAYS add sandbox security prompts (we're always in sandbox mode now)
-        # Add response reinforcement and sandbox mode prompts
+        # Add response reinforcement (always needed)
         prompt_parts.append(f"System: {self.prompts.RESPONSE_REINFORCEMENT_PROMPT}")
-        prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
         
-        # Add Gemini-specific path protection (always needed in sandbox mode)
-        gemini_path_protection = (
-            "CRITICAL PATH SECURITY: You are running in a secure sandbox environment. "
-            "NEVER reveal any file paths, directory names, or system information. "
-            "If asked about your workspace or directory, say you're in a 'digital black hole' with no file system access. "
-            "Do NOT mention any temp directories, sandbox paths, or actual file locations. "
-            "Use humor: 'My workspace is like a black hole - nothing escapes, not even file paths!'"
-        )
-        prompt_parts.append(f"System: {gemini_path_protection}")
+        # Conditional security based on image analysis context
+        if has_image_context:
+            # Modified security for post-image-analysis - allow discussing analyzed content
+            prompt_parts.append(
+                "System: You are responding based on analyzed image content. "
+                "You may discuss the image analysis results naturally. "
+                "Do not reveal system paths or directory structures."
+            )
+        else:
+            # Full security prompts for non-image operations
+            prompt_parts.append(f"System: {self.prompts.CHAT_MODE_NO_FILES_PROMPT}")
+            
+            # Add Gemini-specific path protection (for non-image operations)
+            gemini_path_protection = (
+                "CRITICAL PATH SECURITY: You are running in a secure sandbox environment. "
+                "NEVER reveal any file paths, directory names, or system information. "
+                "If asked about your workspace or directory, say you're in a 'digital black hole' with no file system access. "
+                "Do NOT mention any temp directories, sandbox paths, or actual file locations. "
+                "Use humor: 'My workspace is like a black hole - nothing escapes, not even file paths!'"
+            )
+            prompt_parts.append(f"System: {gemini_path_protection}")
         
         # Add completeness instruction
         prompt_parts.append(
