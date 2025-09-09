@@ -393,7 +393,7 @@ class GeminiCLI:
             await process.stdin.drain()
             process.stdin.close()
             
-            # Stream output line by line
+            # Stream output with minimal buffering for smooth token-by-token delivery
             buffer = ""
             while True:
                 try:
@@ -407,19 +407,13 @@ class GeminiCLI:
                         # Process ended
                         break
                     
-                    # Decode and add to buffer
+                    # Decode chunk
                     text = chunk.decode('utf-8', errors='ignore')
-                    buffer += text
                     
-                    # Split by lines and yield complete lines
-                    lines = buffer.split('\n')
-                    buffer = lines[-1]  # Keep incomplete line in buffer
-                    
-                    for line in lines[:-1]:
-                        if line.strip():
-                            # Filter sensitive paths in chat mode
-                            filtered_line = self._filter_sensitive_paths(line, True)  # Always filter in sandbox mode
-                            yield filtered_line + '\n'
+                    # For Gemini, we can stream immediately since it doesn't have auth messages like Qwen
+                    # Filter and yield chunk immediately for smooth streaming
+                    filtered_chunk = self._filter_sensitive_paths(text, True)  # Always filter in sandbox mode
+                    yield filtered_chunk
                             
                 except asyncio.TimeoutError:
                     # Check if process is still running
@@ -427,10 +421,7 @@ class GeminiCLI:
                         break
                     continue
             
-            # Yield any remaining buffer
-            if buffer.strip():
-                filtered_buffer = self._filter_sensitive_paths(buffer, True)  # Always filter in sandbox mode
-                yield filtered_buffer
+            # No need to yield remaining buffer since we stream everything immediately
             
             # Wait for process to complete
             await process.wait()

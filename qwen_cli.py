@@ -380,9 +380,10 @@ class QwenCLI:
             
             stderr_task = asyncio.create_task(consume_stderr())
             
-            # Stream output line by line - filtering only auth/debug messages
+            # Stream output with minimal buffering for smooth token-by-token delivery
             buffer = ""
             started_response = False  # Track if we've seen actual response content
+            auth_filtering_done = False  # Track if we've passed initial auth messages
             
             auth_message_patterns = [
                 r"Loaded cached [Qq]wen credentials",
@@ -431,46 +432,64 @@ class QwenCLI:
                         # Process ended
                         break
                     
-                    # Decode and add to buffer
+                    # Decode chunk
                     text = chunk.decode('utf-8', errors='ignore')
-                    buffer += text
                     
-                    # Split by lines and yield complete lines
-                    lines = buffer.split('\n')
-                    buffer = lines[-1]  # Keep incomplete line in buffer
-                    
-                    for line in lines[:-1]:
-                        if line.strip():
-                            # Check if this is an auth/debug message to skip
-                            is_auth_message = False
-                            line_stripped = line.strip()
+                    # If we haven't started the response yet, we need to filter auth messages
+                    if not auth_filtering_done:
+                        buffer += text
+                        
+                        # Check if buffer contains complete lines to analyze for auth
+                        if '\n' in buffer:
+                            lines = buffer.split('\n')
+                            buffer = lines[-1]  # Keep incomplete line
                             
-                            # Check for auth patterns
-                            for pattern in auth_message_patterns:
-                                if re.search(pattern, line, re.IGNORECASE):
-                                    is_auth_message = True
-                                    logger.debug(f"Filtering auth/debug message: {line_stripped[:100]}")
-                                    break
-                            
-                            # Also filter lines that are part of JSON auth objects
-                            if not is_auth_message and (
-                                line_stripped == '{' or 
-                                line_stripped == '}' or
-                                line_stripped.startswith('"device_code"') or
-                                line_stripped.startswith('"user_code"') or
-                                line_stripped.startswith('"verification_uri') or
-                                line_stripped.startswith('"expires_in"') or
-                                (line_stripped == '.' and not started_response)  # Single dots during polling
-                            ):
-                                is_auth_message = True
-                                logger.debug(f"Filtering auth JSON/polling: {line_stripped[:50]}")
-                            
-                            if not is_auth_message:
-                                # This is actual response content (including thinking)
-                                started_response = True
-                                # Filter sensitive paths in chat mode
-                                filtered_line = self._filter_sensitive_paths(line, True)
-                                yield filtered_line + '\n'
+                            for line in lines[:-1]:
+                                if line.strip():
+                                    is_auth = False
+                                    line_stripped = line.strip()
+                                    
+                                    # Check for auth patterns
+                                    for pattern in auth_message_patterns:
+                                        if re.search(pattern, line, re.IGNORECASE):
+                                            is_auth = True
+                                            logger.debug(f"Filtering auth: {line_stripped[:50]}")
+                                            break
+                                    
+                                    # Check for JSON auth patterns
+                                    if not is_auth and (
+                                        line_stripped in ['{', '}'] or
+                                        line_stripped.startswith('"device_code"') or
+                                        line_stripped.startswith('"user_code"') or
+                                        line_stripped.startswith('"verification_uri') or
+                                        line_stripped.startswith('"expires_in"') or
+                                        line_stripped == '.'
+                                    ):
+                                        is_auth = True
+                                        logger.debug(f"Filtering auth JSON: {line_stripped[:30]}")
+                                    
+                                    if not is_auth:
+                                        # Found first non-auth content
+                                        auth_filtering_done = True
+                                        started_response = True
+                                        # Yield this line
+                                        filtered = self._filter_sensitive_paths(line, True)
+                                        yield filtered + '\n'
+                        
+                        # If buffer gets too large without newlines, assume no more auth
+                        elif len(buffer) > 500:
+                            auth_filtering_done = True
+                            started_response = True
+                            # Yield accumulated buffer
+                            filtered = self._filter_sensitive_paths(buffer, True)
+                            yield filtered
+                            buffer = ""
+                    else:
+                        # Auth filtering done - stream everything immediately
+                        started_response = True
+                        # Filter and yield chunk immediately for smooth streaming
+                        filtered_chunk = self._filter_sensitive_paths(text, True)
+                        yield filtered_chunk
                             
                 except asyncio.TimeoutError:
                     # Check if process is still running
@@ -478,17 +497,11 @@ class QwenCLI:
                         break
                     continue
             
-            # Yield any remaining buffer (if not auth message)
-            if buffer.strip():
-                is_auth_message = False
-                for pattern in auth_message_patterns:
-                    if re.search(pattern, buffer, re.IGNORECASE):
-                        is_auth_message = True
-                        break
-                
-                if not is_auth_message:
-                    filtered_buffer = self._filter_sensitive_paths(buffer, True)
-                    yield filtered_buffer
+            # Yield any remaining buffer
+            if buffer.strip() and started_response:
+                # Only yield if we've started the actual response
+                filtered_buffer = self._filter_sensitive_paths(buffer, True)
+                yield filtered_buffer
             
             # Cancel stderr consumer task
             stderr_task.cancel()
