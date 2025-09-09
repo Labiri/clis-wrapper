@@ -14,6 +14,10 @@ services:
       # Gemini CLI Configuration
       - GEMINI_CLI_PATH=${GEMINI_CLI_PATH:-gemini}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-pro}
+      # Qwen CLI Configuration
+      - QWEN_CLI_PATH=${QWEN_CLI_PATH:-qwen}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen3-coder-plus}
+      - QWEN_MODELS=${QWEN_MODELS:-auto,qwen3-coder-plus,qwen3-coder,qwen3-coder-480b-a35b-instruct}
       # API Configuration
       - PORT=${PORT:-8000}
       - API_KEY=${API_KEY:-}

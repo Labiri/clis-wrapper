@@ -5,6 +5,7 @@ import logging
 import secrets
 import string
 import random
+import time
 from typing import Optional, AsyncGenerator, Dict, Any, Tuple
 from contextlib import asynccontextmanager
 
@@ -29,8 +30,10 @@ from models import (
 )
 from claude_cli import ClaudeCodeCLI
 from gemini_cli import GeminiCLI
+from qwen_cli import QwenCLI
 from message_adapter import MessageAdapter
 from gemini_message_adapter import GeminiMessageAdapter
+from qwen_message_adapter import QwenMessageAdapter
 from image_analysis_orchestrator import ImageAnalysisOrchestrator
 from auth import verify_api_key, security, validate_claude_code_auth, get_claude_code_auth_info
 from parameter_validator import ParameterValidator, CompatibilityReporter
@@ -85,7 +88,9 @@ def get_model_provider(model_name: str) -> str:
     # Remove chat mode suffixes if present
     base_model = base_model.replace("-chat-progress", "").replace("-chat", "")
     
-    if base_model.startswith("gemini") or base_model.startswith("models/gemini"):
+    if base_model.startswith("qwen"):
+        return "qwen"
+    elif base_model.startswith("gemini") or base_model.startswith("models/gemini"):
         return "gemini"
     elif base_model.startswith("claude"):
         return "claude"
@@ -151,6 +156,11 @@ claude_cli = ClaudeCodeCLI(
 
 # Initialize Gemini CLI
 gemini_cli = GeminiCLI(
+    timeout=int(os.getenv("MAX_TIMEOUT", "600000"))
+)
+
+# Initialize Qwen CLI
+qwen_cli = QwenCLI(
     timeout=int(os.getenv("MAX_TIMEOUT", "600000"))
 )
 
@@ -1504,6 +1514,173 @@ async def generate_gemini_streaming_response(
         yield f"data: {json.dumps(error_chunk)}\n\n"
         yield "data: [DONE]\n\n"
 
+
+async def generate_qwen_streaming_response(
+    request: ChatCompletionRequest,
+    request_id: str,
+    requires_xml: bool = False
+) -> AsyncGenerator[str, None]:
+    """Generate streaming response from Qwen with keepalive support."""
+    try:
+        # Convert messages to list of dicts
+        messages = [msg.dict() for msg in request.messages]
+        
+        # Create queue for chunks
+        chunk_queue = asyncio.Queue()
+        stream_complete = asyncio.Event()
+        
+        # Task to consume Qwen stream and queue chunks
+        async def qwen_consumer():
+            try:
+                logger.debug("Starting Qwen stream consumer")
+                chunk_count = 0
+                async for chunk in qwen_cli.stream_completion(
+                    messages=messages,
+                    model=request.model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    requires_xml=requires_xml
+                ):
+                    if chunk:
+                        chunk_count += 1
+                        # Format chunk for SSE
+                        stream_chunk = QwenMessageAdapter.prepare_streaming_chunk(chunk)
+                        stream_chunk['id'] = request_id
+                        stream_chunk['object'] = 'chat.completion.chunk'
+                        stream_chunk['created'] = int(time.time())
+                        stream_chunk['model'] = request.model
+                        await chunk_queue.put(stream_chunk)
+                        logger.debug(f"Qwen consumer: queued chunk {chunk_count}")
+                
+                logger.debug(f"Qwen stream complete, total chunks: {chunk_count}")
+            except Exception as e:
+                logger.error(f"Error in Qwen consumer: {e}")
+                # Queue error chunk
+                error_chunk = {
+                    'id': request_id,
+                    'object': 'chat.completion.chunk',
+                    'created': int(time.time()),
+                    'model': request.model,
+                    'choices': [{
+                        'index': 0,
+                        'delta': {'content': f"\n\nError: {str(e)}"},
+                        'finish_reason': 'error'
+                    }]
+                }
+                await chunk_queue.put(error_chunk)
+            finally:
+                stream_complete.set()
+                logger.debug("Qwen consumer: stream marked complete")
+        
+        # Start consumer task
+        consumer_task = asyncio.create_task(qwen_consumer())
+        
+        # Main loop with keepalive support
+        try:
+            queue_task = asyncio.create_task(chunk_queue.get())
+            keepalive_task = asyncio.create_task(asyncio.sleep(SSE_KEEPALIVE_INTERVAL))
+            stream_ended = False
+            chunks_sent = 0
+            
+            while not stream_ended:
+                # Wait for either a chunk or keepalive timeout
+                done, pending = await asyncio.wait(
+                    {queue_task, keepalive_task},
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                if queue_task in done:
+                    # Got a chunk from queue
+                    chunk = await queue_task
+                    chunks_sent += 1
+                    logger.debug(f"Sending Qwen chunk {chunks_sent}")
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    
+                    # Check if this was the last chunk
+                    if chunk.get('choices', [{}])[0].get('finish_reason'):
+                        stream_ended = True
+                        logger.debug("Qwen stream: finish_reason detected, ending stream")
+                    else:
+                        # Create new queue task
+                        queue_task = asyncio.create_task(chunk_queue.get())
+                
+                if keepalive_task in done:
+                    # Keepalive timeout - send keepalive
+                    if not stream_ended and not stream_complete.is_set():
+                        logger.debug("Sending keepalive for Qwen stream")
+                        keepalive = {
+                            'id': request_id,
+                            'object': 'chat.completion.chunk',
+                            'created': int(time.time()),
+                            'model': request.model,
+                            'choices': [{'index': 0, 'delta': {}, 'finish_reason': None}]
+                        }
+                        yield f"data: {json.dumps(keepalive)}\n\n"
+                    
+                    # Create new keepalive task
+                    keepalive_task = asyncio.create_task(asyncio.sleep(SSE_KEEPALIVE_INTERVAL))
+                
+                # Check if stream is complete but queue might still have items
+                if stream_complete.is_set() and chunk_queue.empty():
+                    stream_ended = True
+                    logger.debug("Qwen stream complete and queue empty")
+            
+            # Cancel pending tasks
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Send final chunk with finish_reason if not already sent
+            if not any('finish_reason' in chunk.get('choices', [{}])[0] for chunk in []):
+                final_chunk = {
+                    'id': request_id,
+                    'object': 'chat.completion.chunk',
+                    'created': int(time.time()),
+                    'model': request.model,
+                    'choices': [{
+                        'index': 0,
+                        'delta': {},
+                        'finish_reason': 'stop'
+                    }]
+                }
+                yield f"data: {json.dumps(final_chunk)}\n\n"
+            
+            yield "data: [DONE]\n\n"
+            logger.info(f"Qwen streaming complete, sent {chunks_sent} chunks")
+            
+        finally:
+            # Ensure consumer task is cleaned up
+            if not consumer_task.done():
+                consumer_task.cancel()
+                try:
+                    await consumer_task
+                except asyncio.CancelledError:
+                    pass
+    
+    except Exception as e:
+        logger.error(f"Error in Qwen streaming: {e}")
+        error_chunk = {
+            'id': request_id,
+            'object': 'chat.completion.chunk',
+            'created': int(time.time()),
+            'model': request.model,
+            'choices': [{
+                'index': 0,
+                'delta': {'content': f"\n\nError: {str(e)}"},
+                'finish_reason': 'error'
+            }],
+            "error": {
+                "message": str(e),
+                "type": "streaming_error"
+            }
+        }
+        yield f"data: {json.dumps(error_chunk)}\n\n"
+        yield "data: [DONE]\n\n"
+
+
 async def generate_streaming_response(
     request: ChatCompletionRequest,
     request_id: str,
@@ -1794,6 +1971,10 @@ async def chat_completions(
         # Gemini uses CLI authentication (gemini auth login)
         # No API key required - it uses the authenticated CLI
         logger.debug("Using Gemini CLI authentication")
+    elif provider == "qwen":
+        # Qwen uses CLI authentication (qwen auth login)
+        # No API key required - it uses the authenticated CLI
+        logger.debug("Using Qwen CLI authentication")
     
     try:
         request_id = f"chatcmpl-{os.urandom(8).hex()}"
@@ -1933,6 +2114,51 @@ async def chat_completions(
                 logger.info(f"📊 Request completed in {request_duration:.2f}s - Model: {base_model}, Stream: False, Provider: Gemini")
                 
                 return response
+        
+        # Handle Qwen models separately
+        if provider == "qwen":
+            if request_body.stream:
+                # Qwen streaming response - pass requires_xml flag
+                stream_generator = generate_qwen_streaming_response(request_body, request_id, requires_xml=requires_xml)
+                return StreamingResponse(
+                    stream_generator,
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                    }
+                )
+            else:
+                # Qwen non-streaming response
+                messages = [msg.dict() for msg in request_body.messages]
+                
+                # Collect streaming response into single response
+                full_content = ""
+                async for chunk in qwen_cli.stream_completion(
+                    messages=messages,
+                    model=base_model,
+                    temperature=request_body.temperature,
+                    max_tokens=request_body.max_tokens,
+                    requires_xml=requires_xml
+                ):
+                    full_content += chunk
+                
+                # Format response for OpenAI compatibility
+                return ChatCompletionResponse(
+                    id=request_id,
+                    object="chat.completion",
+                    created=int(os.urandom(4).hex(), 16),
+                    model=request_body.model,
+                    choices=[Choice(
+                        index=0,
+                        message=Message(
+                            role='assistant',
+                            content=full_content.strip()
+                        ),
+                        finish_reason="stop"
+                    )],
+                    usage=Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                )
         
         # Continue with Claude processing
         # Extract Claude-specific parameters from headers
@@ -2081,6 +2307,9 @@ async def list_models(
     # Get Gemini models
     gemini_models = await gemini_cli.list_models()
     
+    # Get Qwen models
+    qwen_models = await qwen_cli.list_models()
+    
     models_data = []
     
     # Add Claude models
@@ -2107,6 +2336,17 @@ async def list_models(
             "owned_by": "google"
         })
         # Note: No progress variant for Gemini as it already streams natively
+    
+    # Add Qwen models (with qwen- prefix for consistency)
+    for base_model in sorted(qwen_models):
+        # Add base model with qwen- prefix
+        model_id = f"qwen-{base_model}" if not base_model.startswith("qwen-") else base_model
+        models_data.append({
+            "id": model_id,
+            "object": "model",
+            "owned_by": "qwen"
+        })
+        # Note: No progress variant for Qwen as it already streams natively
     
     return {
         "object": "list",
