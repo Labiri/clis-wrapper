@@ -188,6 +188,9 @@ Edit the `.env` file:
 # Claude CLI Configuration
 CLAUDE_CLI_PATH=claude
 
+# Skip CLI verification on startup (speeds up initialization)
+SKIP_CLI_VERIFICATION=true
+
 # Gemini CLI Configuration  
 GEMINI_CLI_PATH=gemini
 GEMINI_MODEL=gemini-2.5-pro  # Default model for Gemini
@@ -363,6 +366,27 @@ RATE_LIMIT_CHAT_PER_MINUTE=10
 RATE_LIMIT_DEBUG_PER_MINUTE=2
 RATE_LIMIT_AUTH_PER_MINUTE=10
 RATE_LIMIT_HEALTH_PER_MINUTE=30
+```
+
+## Performance Features
+
+### Response Time Monitoring
+The wrapper automatically logs request completion times for performance monitoring:
+```
+📊 Request completed in 6.64s - Model: claude-3-5-sonnet-20241022, Stream: False
+```
+
+This helps identify performance bottlenecks and track latency across different models and request types.
+
+### Skip CLI Verification
+By default, `SKIP_CLI_VERIFICATION=true` is set to skip the CLI verification check on startup. This:
+- Reduces startup time by ~7 seconds
+- Avoids unnecessary subprocess spawning during initialization
+- Particularly useful in containerized environments
+
+To enable verification (useful for debugging):
+```env
+SKIP_CLI_VERIFICATION=false
 ```
 
 ## Running the Server
@@ -940,6 +964,86 @@ Chat mode is ideal for:
 - **Restricted Environments**: When you need Claude's capabilities without system access
 - **Multi-tenant Services**: Ensure complete isolation between requests
 - **Development Tools**: IDEs and extensions that need AI assistance without file system access
+
+## Eliminating Cold Start Latency
+
+The first API request typically experiences a 5-10 second delay due to Node.js/Claude CLI initialization. This wrapper includes an intelligent warming system to eliminate this latency.
+
+### The Problem
+
+Each request spawns a new Node.js subprocess that must:
+- Load the Node.js runtime (~50MB)
+- Load NPM modules for Claude CLI (~200MB)
+- Initialize the JavaScript engine
+
+This takes 5-10 seconds on first execution, but subsequent requests benefit from OS file caching (1-2 seconds).
+
+### The Solution: Adaptive Warming
+
+The warmup system pre-loads Node.js modules WITHOUT making API calls:
+
+#### Strategies
+
+1. **None** (default if not configured)
+   - No warming, original behavior
+   - First request: 5-10s, subsequent: 1-2s
+
+2. **Periodic**
+   - Refreshes cache every N seconds
+   - Resource usage: Minimal CPU spike every interval
+   - First request: 1-2s
+
+3. **Persistent**
+   - Keeps Node.js process always running
+   - Resource usage: ~50MB constant RAM
+   - First request: <500ms
+
+4. **Adaptive** (recommended)
+   - Starts with periodic warming
+   - Switches to persistent during high load
+   - Automatically scales based on usage
+
+### Configuration
+
+```bash
+# Basic setup (recommended)
+PREWARM_STRATEGY=adaptive
+SKIP_CLI_VERIFICATION=true
+
+# Advanced tuning
+PREWARM_REFRESH_SECONDS=30        # Refresh interval
+PREWARM_PERSISTENT_THRESHOLD=10   # RPM to trigger persistent
+PREWARM_IDLE_TIMEOUT=300          # Stop after 5min idle
+```
+
+### Performance Impact
+
+| Strategy | First Request | Memory Usage | CPU Usage |
+|----------|--------------|--------------|-----------|
+| None | 5-10s | 0 | 0 |
+| Periodic | 1-2s | 0 | Spike every 30s |
+| Persistent | <500ms | 50MB constant | Minimal |
+| Adaptive | 1-2s / <500ms | 0-50MB | Varies |
+
+### Monitoring
+
+Check warmup statistics:
+```bash
+curl http://localhost:8000/v1/warmup/stats
+```
+
+Response:
+```json
+{
+  "strategy": "adaptive",
+  "is_persistent_mode": false,
+  "warmup_count": 42,
+  "warmup_failures": 0,
+  "average_warmup_time": 0.150,
+  "last_request_ago": 15.2,
+  "current_rpm": 3
+}
+```
 
 ## Multimodal Image Support
 

@@ -50,6 +50,9 @@ SSE_KEEPALIVE_INTERVAL = int(os.getenv('SSE_KEEPALIVE_INTERVAL', '30'))  # secon
 CHAT_MODE_CLEANUP_SESSIONS = os.getenv('CHAT_MODE_CLEANUP_SESSIONS', 'true').lower() in ('true', '1', 'yes', 'on')
 CHAT_MODE_CLEANUP_DELAY_MINUTES = int(os.getenv('CHAT_MODE_CLEANUP_DELAY_MINUTES', '720'))  # 12 hours default
 
+# Warmup configuration
+SKIP_CLI_VERIFICATION = os.getenv('SKIP_CLI_VERIFICATION', 'false').lower() in ('true', '1', 'yes')
+
 # Set logging level based on debug/verbose mode
 log_level = logging.DEBUG if (DEBUG_MODE or VERBOSE) else logging.INFO
 logging.basicConfig(
@@ -152,6 +155,7 @@ gemini_cli = GeminiCLI(
 )
 
 
+
 async def sandbox_session_cleanup_task():
     """Background task to clean up expired sandbox sessions."""
     tracker = get_tracker()
@@ -234,14 +238,19 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(f"✅ Claude Code authentication validated: {auth_info['method']}")
     
-    # Then verify CLI
-    cli_verified = await claude_cli.verify_cli()
-    
-    if cli_verified:
-        logger.info("✅ Claude Code CLI verified successfully")
+    # Skip or perform CLI verification based on configuration
+    if not SKIP_CLI_VERIFICATION:
+        logger.info("Verifying Claude Code CLI...")
+        cli_verified = await claude_cli.verify_cli()
+        
+        if cli_verified:
+            logger.info("✅ Claude Code CLI verified successfully")
+        else:
+            logger.warning("⚠️  Claude Code CLI verification failed!")
+            logger.warning("The server will start, but requests may fail.")
     else:
-        logger.warning("⚠️  Claude Code CLI verification failed!")
-        logger.warning("The server will start, but requests may fail.")
+        logger.info("Skipping CLI verification (SKIP_CLI_VERIFICATION=true)")
+        logger.info("This speeds up startup and avoids unnecessary cold start")
     
     # Log debug information if debug mode is enabled
     if DEBUG_MODE or VERBOSE:
@@ -1753,6 +1762,11 @@ async def chat_completions(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ):
     """OpenAI-compatible chat completions endpoint."""
+    # Start timing the request
+    import time
+    request_start_time = time.time()
+    
+    
     # Check FastAPI API key if configured
     await verify_api_key(request, credentials)
     
@@ -1762,6 +1776,7 @@ async def chat_completions(
     
     # Validate authentication based on provider
     if provider == "claude":
+        # Optimize Claude SDK before request
         auth_valid, auth_info = validate_claude_code_auth()
         
         if not auth_valid:
@@ -1869,8 +1884,16 @@ async def chat_completions(
             if request_body.stream:
                 # Gemini streaming response - pass requires_xml flag
                 stream_generator = generate_gemini_streaming_response(request_body, request_id, requires_xml=requires_xml)
+                
+                # Wrap generator to log timing when complete
+                async def timed_gemini_stream():
+                    async for chunk in stream_generator:
+                        yield chunk
+                    request_duration = time.time() - request_start_time
+                    logger.info(f"📊 Request completed in {request_duration:.2f}s - Model: {base_model}, Stream: True, Provider: Gemini")
+                
                 return StreamingResponse(
-                    stream_generator,
+                    timed_gemini_stream(),
                     media_type="text/event-stream",
                     headers={
                         "Cache-Control": "no-cache",
@@ -1904,6 +1927,12 @@ async def chat_completions(
                     )],
                     usage=Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
                 )
+                
+                # Log timing for Gemini non-streaming
+                request_duration = time.time() - request_start_time
+                logger.info(f"📊 Request completed in {request_duration:.2f}s - Model: {base_model}, Stream: False, Provider: Gemini")
+                
+                return response
         
         # Continue with Claude processing
         # Extract Claude-specific parameters from headers
@@ -1932,8 +1961,16 @@ async def chat_completions(
                 # Normal mode - all chunks without progress injection
                 stream_generator = generate_streaming_response(request_body, request_id, claude_headers, requires_xml)
             
+            # Wrap generator to log timing when complete
+            async def timed_stream_generator():
+                async for chunk in stream_generator:
+                    yield chunk
+                # Log timing after streaming completes
+                request_duration = time.time() - request_start_time
+                logger.info(f"📊 Request completed in {request_duration:.2f}s - Model: {base_model}, Stream: True")
+            
             return StreamingResponse(
-                stream_generator,
+                timed_stream_generator(),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -2015,6 +2052,10 @@ async def chat_completions(
                     total_tokens=prompt_tokens + completion_tokens
                 )
             )
+            
+            # Log request timing
+            request_duration = time.time() - request_start_time
+            logger.info(f"📊 Request completed in {request_duration:.2f}s - Model: {base_model}, Stream: False")
             
             return response
             
