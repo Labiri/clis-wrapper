@@ -553,7 +553,20 @@ class QwenCLI:
     
     async def list_models(self) -> List[str]:
         """List available Qwen models from environment variable."""
-        # Get models from environment variable or use defaults
-        models_str = os.getenv('QWEN_MODELS', 
-            'auto,qwen3-coder-plus,qwen3-coder,qwen3-coder-480b-a35b-instruct')
-        return [m.strip() for m in models_str.split(',') if m.strip()]
+        # Get models from environment variable
+        models_str = os.getenv('QWEN_MODELS', '')
+        
+        # Parse models from env var
+        models = []
+        if models_str:
+            models = [m.strip() for m in models_str.split(',') if m.strip()]
+        
+        # Always ensure 'auto' is available as a fallback
+        if 'auto' not in models:
+            models.insert(0, 'auto')  # Add at the beginning
+        
+        # If no models configured, provide sensible defaults
+        if len(models) == 1:  # Only 'auto' is present
+            models.extend(['qwen3-coder-plus', 'qwen3-coder', 'qwen3-coder-480b-a35b-instruct'])
+        
+        return models
