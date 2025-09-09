@@ -6,7 +6,7 @@
 > 
 > **Use at your own risk.** We recommend waiting for the refactoring to complete before using this in production environments.
 
-A unified OpenAI API-compatible endpoint for multiple AI CLIs, currently supporting **Anthropic Claude** and **Google Gemini**. The quickest and easiest way to leverage multiple AI providers through a single, standardized API interface.
+A unified OpenAI API-compatible endpoint for multiple AI CLIs, currently supporting **Anthropic Claude**, **Google Gemini**, and **Qwen Code**. The quickest and easiest way to leverage multiple AI providers through a single, standardized API interface.
 
 ## Attribution & History
 
@@ -19,11 +19,11 @@ We are deeply grateful to the original author and contributors for their foundat
 This wrapper is being simplified and optimized specifically for **chat mode operations**, making it the ideal solution for:
 
 - **AI Coding Assistants** - Seamless integration with Roo Code, Cline, Cursor, and similar tools
-- **Quick Multi-Provider Access** - Switch between Claude, Gemini, and soon Codex/Qwen without changing your code
+- **Quick Multi-Provider Access** - Switch between Claude, Gemini, and Qwen without changing your code
 - **Simplified Chat APIs** - Focus on chat completions without the complexity of file operations
 - **Unified Endpoint** - One API to rule them all - no need to manage multiple SDKs or authentication methods
 
-**Coming Soon**: Support for **Codex** and **Qwen** CLIs to expand multi-provider capabilities.
+**Coming Soon**: Support for **Codex** CLI to expand multi-provider capabilities.
 
 ## Status
 
@@ -32,8 +32,8 @@ This wrapper is being simplified and optimized specifically for **chat mode oper
 ### Multi-Provider Support
 - **Anthropic Claude** - All Claude models via official SDK
 - **Google Gemini** - Native CLI integration with all models
+- **Qwen Code** - Full support for Qwen3-Coder models with thinking preservation
 - **Codex** - [Planned]
-- **Qwen** - [Planned]
 
 ### Core Features
 - **Sandboxed execution** - Complete isolation for security
@@ -44,7 +44,7 @@ This wrapper is being simplified and optimized specifically for **chat mode oper
 - **XML tool format support** - Compatible with Roo/Cline and similar tools
 
 ### Key Features
-- **Automatic model routing** - Use `claude-*` or `gemini-*` prefixes
+- **Automatic model routing** - Use `claude-*`, `gemini-*`, or `qwen-*` prefixes
 - **Intelligent XML detection** - Confidence-based scoring avoids false positives
 - **Advanced image support** - Model-specific injection strategies for optimal results
 - **No API keys required** - Uses CLI authentication
