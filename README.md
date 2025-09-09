@@ -56,7 +56,7 @@ This wrapper is being simplified and optimized specifically for **chat mode oper
 
 ### Unified Multi-Provider API
 - Single OpenAI-compatible endpoint for multiple AI providers
-- Automatic model routing based on prefixes (`claude-*`, `gemini-*`)
+- Automatic model routing based on prefixes (`claude-*`, `gemini-*`, `qwen-*`)
 - Drop-in replacement for OpenAI SDK - no code changes needed
 - Support for streaming and non-streaming responses
 
@@ -116,6 +116,16 @@ npm install -g @google/gemini-cli
 gemini auth login
 ```
 
+### Setup for Qwen
+
+```bash
+# 1. Install Qwen CLI
+npm install -g @qwen/qwen-code
+
+# 2. Authenticate with Qwen account
+qwen auth login
+```
+
 ### Install and Run
 
 ```bash
@@ -170,6 +180,14 @@ The wrapper automatically routes requests based on the model name:
 - `gemini-2.5-pro` - Most advanced thinking model (default)
 - `gemini-2.5-flash` - Fast, efficient model with thinking capabilities
 
+### Qwen Models (prefix: `qwen-*`)
+- `qwen-auto` - Let Qwen CLI automatically select the best model (default)
+- `qwen-qwen3-coder-plus` - Most capable Qwen3 Coder model
+- `qwen-qwen3-coder` - Standard Qwen3 Coder model
+- `qwen-qwen3-coder-480b-a35b-instruct` - Large instruction-tuned model
+
+Note: Qwen models preserve thinking/reasoning blocks in their output for full transparency.
+
 ### Progress Indicator Suffixes
 Both Claude and Gemini models support progress indicator control:
 - Standard mode (default) - No suffix needed, no progress markers
@@ -191,6 +209,11 @@ CLAUDE_CLI_PATH=claude
 # Gemini CLI Configuration  
 GEMINI_CLI_PATH=gemini
 GEMINI_MODEL=gemini-2.5-pro  # Default model for Gemini
+
+# Qwen CLI Configuration
+QWEN_CLI_PATH=qwen
+QWEN_MODEL=qwen3-coder-plus  # Default model for Qwen
+QWEN_MODELS=auto,qwen3-coder-plus,qwen3-coder  # Available models (auto always included)
 
 # API Configuration
 # If API_KEY is not set, server will prompt for interactive API key protection on startup
@@ -487,6 +510,10 @@ services:
       # Gemini CLI Configuration
       - GEMINI_CLI_PATH=${GEMINI_CLI_PATH:-gemini}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-pro}
+      # Qwen CLI Configuration
+      - QWEN_CLI_PATH=${QWEN_CLI_PATH:-qwen}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen3-coder-plus}
+      - QWEN_MODELS=${QWEN_MODELS:-}  # Empty means auto + defaults
       # API Configuration
       - PORT=${PORT:-8000}
       - API_KEY=${API_KEY:-}
@@ -540,6 +567,11 @@ Env vars override defaults and can be set at runtime with `-e` flags or in `dock
 - **Gemini Configuration**:
   - `GEMINI_CLI_PATH=gemini`: Path to Gemini CLI executable (default: gemini).
   - `GEMINI_MODEL=gemini-2.5-pro`: Default Gemini model (default: gemini-2.5-pro).
+
+- **Qwen Configuration**:
+  - `QWEN_CLI_PATH=qwen`: Path to Qwen CLI executable (default: qwen).
+  - `QWEN_MODEL=qwen3-coder-plus`: Default Qwen model (default: qwen3-coder-plus).
+  - `QWEN_MODELS`: Comma-separated list of available models (auto is always included).
 
 - **General Configuration**:
   - `DEBUG_MODE=false`: Enable debug logging (default: false).
@@ -692,6 +724,16 @@ curl -X POST http://localhost:8000/v1/chat/completions \
     ]
   }'
 
+# Qwen model (auto-selection)
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen-auto",
+    "messages": [
+      {"role": "user", "content": "What is 2 + 2?"}
+    ]
+  }'
+
 # With API key protection (when enabled)
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -740,7 +782,18 @@ response = client.chat.completions.create(
 )
 
 print(response.choices[0].message.content)
-# Output: Fast response with secure web-based tools only
+
+# Using Qwen model (auto-selection)
+response = client.chat.completions.create(
+    model="qwen-auto",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Explain recursion with an example."}
+    ]
+)
+
+print(response.choices[0].message.content)
+# Note: Qwen preserves thinking/reasoning in output for transparency
 
 # Check real costs and tokens
 print(f"Cost: ${response.usage.total_tokens * 0.000003:.6f}")  # Real cost tracking
@@ -776,6 +829,14 @@ The wrapper dynamically discovers available models from the Claude and Gemini CL
 - `gemini-2.5-pro` - Most advanced thinking model (default)
 - `gemini-2.5-flash` - Fast model with thinking capabilities
 
+### Qwen Models:
+- `qwen-auto` - Automatic model selection by Qwen CLI
+- `qwen-qwen3-coder-plus` - Most capable Qwen3 Coder model
+- `qwen-qwen3-coder` - Standard Qwen3 Coder model
+- `qwen-qwen3-coder-480b-a35b-instruct` - Large instruction model
+
+All Qwen models preserve thinking/reasoning blocks in their responses for full transparency.
+
 The model parameter is passed directly to the appropriate CLI. Each model also supports:
 - Standard mode (default) - No suffix needed
 - `{model}-progress` - With streaming progress indicators
@@ -787,12 +848,13 @@ curl http://localhost:8000/v1/models
 
 ## Web Search Capabilities
 
-Both Claude and Gemini models have built-in web search functionality:
+All three AI providers have web search capabilities:
 
 - **Claude Models**: Web search via WebSearch and WebFetch tools (enabled in chat mode)
 - **Gemini Models**: Native web search capability built into the Gemini CLI
+- **Qwen Models**: Web capabilities through the Qwen CLI infrastructure
 
-This allows both models to:
+This allows all models to:
 - Search for current information and events
 - Fetch content from web pages
 - Access real-time data (weather, stock prices, etc.)
@@ -1020,6 +1082,32 @@ response = client.chat.completions.create(
 )
 ```
 
+## Qwen Code Integration
+
+The wrapper provides full support for Qwen Code models with unique features:
+
+### Thinking Block Preservation
+Unlike other providers, Qwen models preserve their internal reasoning/thinking process in the output:
+- **Transparent Reasoning**: See how the model approaches problems
+- **Full Context**: Understand the model's decision-making process
+- **OpenAI Compatible**: Thinking blocks are included in standard message format
+
+### Automatic Model Selection
+The `qwen-auto` model lets Qwen CLI choose the best model for your request:
+```python
+# Let Qwen decide the optimal model
+response = client.chat.completions.create(
+    model="qwen-auto",
+    messages=[{"role": "user", "content": "Help me optimize this algorithm"}]
+)
+```
+
+### Authentication
+Qwen uses device-based authentication similar to other CLI tools:
+- OAuth flow with device codes
+- Cached credentials for seamless usage
+- All authentication prompts are filtered from responses
+
 ## Intelligent XML Tool Format Detection
 
 The wrapper includes sophisticated XML format detection that works intelligently with any AI assistant (Roo, Cline, Cursor, etc.) while avoiding false positives from code discussions.
@@ -1091,10 +1179,11 @@ XML_CONFIDENCE_THRESHOLD=5.0
 ### Planned Enhancements 
 - [ ] **Multiple accounts** - Basic load balancer for distributing requests across accounts
 - [ ] **Codex CLI integration** - Add support for Codex CLI models
-- [ ] **Qwen CLI integration** - Add support for Qwen CLI models  
+- [x] **Qwen CLI integration** - ✅ Completed with full streaming and thinking block support
 - [ ] **LLM ensemble / Council synthetic model endpoint** - Combine multiple models for enhanced responses
 
 ### Recent Improvements
+- **Qwen CLI Integration**: Full support for Qwen Code models with thinking block preservation
 - **Multimodal Images**: Full support for images in both OpenAI and file-based formats
 - **SDK Integration**: Official Python SDK replaces subprocess calls
 - **Real Metadata**: Accurate costs and token counts from SDK
