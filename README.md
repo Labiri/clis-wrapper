@@ -188,6 +188,9 @@ Edit the `.env` file:
 # Claude CLI Configuration
 CLAUDE_CLI_PATH=claude
 
+# Skip CLI verification on startup (speeds up initialization)
+SKIP_CLI_VERIFICATION=true
+
 # Gemini CLI Configuration  
 GEMINI_CLI_PATH=gemini
 GEMINI_MODEL=gemini-2.5-pro  # Default model for Gemini
@@ -363,6 +366,27 @@ RATE_LIMIT_CHAT_PER_MINUTE=10
 RATE_LIMIT_DEBUG_PER_MINUTE=2
 RATE_LIMIT_AUTH_PER_MINUTE=10
 RATE_LIMIT_HEALTH_PER_MINUTE=30
+```
+
+## Performance Features
+
+### Response Time Monitoring
+The wrapper automatically logs request completion times for performance monitoring:
+```
+📊 Request completed in 6.64s - Model: claude-3-5-sonnet-20241022, Stream: False
+```
+
+This helps identify performance bottlenecks and track latency across different models and request types.
+
+### Skip CLI Verification
+By default, `SKIP_CLI_VERIFICATION=true` is set to skip the CLI verification check on startup. This:
+- Reduces startup time by ~7 seconds
+- Avoids unnecessary subprocess spawning during initialization
+- Particularly useful in containerized environments
+
+To enable verification (useful for debugging):
+```env
+SKIP_CLI_VERIFICATION=false
 ```
 
 ## Running the Server

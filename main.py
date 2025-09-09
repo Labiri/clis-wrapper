@@ -39,7 +39,6 @@ from chat_mode import ChatMode, get_chat_mode_info
 from model_utils import ModelUtils
 from session_tracker import get_tracker, scan_claude_projects_for_sandbox_sessions
 from model_discovery import get_supported_models, clear_model_cache
-from warmup_manager import WarmupManager, WarmupStrategy
 
 # Load environment variables
 load_dotenv()
@@ -52,10 +51,6 @@ CHAT_MODE_CLEANUP_SESSIONS = os.getenv('CHAT_MODE_CLEANUP_SESSIONS', 'true').low
 CHAT_MODE_CLEANUP_DELAY_MINUTES = int(os.getenv('CHAT_MODE_CLEANUP_DELAY_MINUTES', '720'))  # 12 hours default
 
 # Warmup configuration
-PREWARM_STRATEGY = os.getenv('PREWARM_STRATEGY', 'adaptive').lower()
-PREWARM_REFRESH_SECONDS = int(os.getenv('PREWARM_REFRESH_SECONDS', '30'))
-PREWARM_PERSISTENT_THRESHOLD = int(os.getenv('PREWARM_PERSISTENT_THRESHOLD', '10'))
-PREWARM_IDLE_TIMEOUT = int(os.getenv('PREWARM_IDLE_TIMEOUT', '300'))
 SKIP_CLI_VERIFICATION = os.getenv('SKIP_CLI_VERIFICATION', 'false').lower() in ('true', '1', 'yes')
 
 # Set logging level based on debug/verbose mode
@@ -159,14 +154,6 @@ gemini_cli = GeminiCLI(
     timeout=int(os.getenv("MAX_TIMEOUT", "600000"))
 )
 
-# Initialize warmup manager
-warmup_manager = WarmupManager(
-    strategy=WarmupStrategy(PREWARM_STRATEGY),
-    refresh_seconds=PREWARM_REFRESH_SECONDS,
-    persistent_threshold=PREWARM_PERSISTENT_THRESHOLD,
-    idle_timeout=PREWARM_IDLE_TIMEOUT,
-    skip_verification=SKIP_CLI_VERIFICATION
-)
 
 
 async def sandbox_session_cleanup_task():
@@ -318,14 +305,9 @@ async def lifespan(app: FastAPI):
         sandbox_cleanup_task = asyncio.create_task(sandbox_session_cleanup_task())
         logger.info("Started sandbox session cleanup background task")
     
-    # Start warmup manager
-    await warmup_manager.start()
-    logger.info(f"Warmup manager started with strategy: {PREWARM_STRATEGY}")
-    
     yield
     
     # Cleanup on shutdown
-    await warmup_manager.stop()
     if sandbox_cleanup_task:
         sandbox_cleanup_task.cancel()
         try:
@@ -1780,8 +1762,10 @@ async def chat_completions(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ):
     """OpenAI-compatible chat completions endpoint."""
-    # Track request for warmup manager
-    await warmup_manager.on_request()
+    # Start timing the request
+    import time
+    request_start_time = time.time()
+    
     
     # Check FastAPI API key if configured
     await verify_api_key(request, credentials)
@@ -1792,6 +1776,7 @@ async def chat_completions(
     
     # Validate authentication based on provider
     if provider == "claude":
+        # Optimize Claude SDK before request
         auth_valid, auth_info = validate_claude_code_auth()
         
         if not auth_valid:
@@ -1899,8 +1884,16 @@ async def chat_completions(
             if request_body.stream:
                 # Gemini streaming response - pass requires_xml flag
                 stream_generator = generate_gemini_streaming_response(request_body, request_id, requires_xml=requires_xml)
+                
+                # Wrap generator to log timing when complete
+                async def timed_gemini_stream():
+                    async for chunk in stream_generator:
+                        yield chunk
+                    request_duration = time.time() - request_start_time
+                    logger.info(f"📊 Request completed in {request_duration:.2f}s - Model: {base_model}, Stream: True, Provider: Gemini")
+                
                 return StreamingResponse(
-                    stream_generator,
+                    timed_gemini_stream(),
                     media_type="text/event-stream",
                     headers={
                         "Cache-Control": "no-cache",
@@ -1934,6 +1927,12 @@ async def chat_completions(
                     )],
                     usage=Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
                 )
+                
+                # Log timing for Gemini non-streaming
+                request_duration = time.time() - request_start_time
+                logger.info(f"📊 Request completed in {request_duration:.2f}s - Model: {base_model}, Stream: False, Provider: Gemini")
+                
+                return response
         
         # Continue with Claude processing
         # Extract Claude-specific parameters from headers
@@ -1962,8 +1961,16 @@ async def chat_completions(
                 # Normal mode - all chunks without progress injection
                 stream_generator = generate_streaming_response(request_body, request_id, claude_headers, requires_xml)
             
+            # Wrap generator to log timing when complete
+            async def timed_stream_generator():
+                async for chunk in stream_generator:
+                    yield chunk
+                # Log timing after streaming completes
+                request_duration = time.time() - request_start_time
+                logger.info(f"📊 Request completed in {request_duration:.2f}s - Model: {base_model}, Stream: True")
+            
             return StreamingResponse(
-                stream_generator,
+                timed_stream_generator(),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -2045,6 +2052,10 @@ async def chat_completions(
                     total_tokens=prompt_tokens + completion_tokens
                 )
             )
+            
+            # Log request timing
+            request_duration = time.time() - request_start_time
+            logger.info(f"📊 Request completed in {request_duration:.2f}s - Model: {base_model}, Stream: False")
             
             return response
             
@@ -2129,19 +2140,6 @@ async def check_compatibility(request_body: ChatCompletionRequest):
 async def health_check(request: Request):
     """Health check endpoint."""
     return {"status": "healthy", "service": "claude-code-openai-wrapper"}
-
-@app.get("/v1/warmup/stats")
-@rate_limit_endpoint("warmup")
-async def get_warmup_stats(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
-):
-    """Get warmup system statistics."""
-    await verify_api_key(request, credentials)
-    return {
-        "status": "ok",
-        "stats": warmup_manager.get_stats()
-    }
 
 
 @app.post("/v1/debug/request")
