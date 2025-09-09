@@ -39,6 +39,7 @@ from chat_mode import ChatMode, get_chat_mode_info
 from model_utils import ModelUtils
 from session_tracker import get_tracker, scan_claude_projects_for_sandbox_sessions
 from model_discovery import get_supported_models, clear_model_cache
+from warmup_manager import WarmupManager, WarmupStrategy
 
 # Load environment variables
 load_dotenv()
@@ -49,6 +50,13 @@ VERBOSE = os.getenv('VERBOSE', 'false').lower() in ('true', '1', 'yes', 'on')
 SSE_KEEPALIVE_INTERVAL = int(os.getenv('SSE_KEEPALIVE_INTERVAL', '30'))  # seconds
 CHAT_MODE_CLEANUP_SESSIONS = os.getenv('CHAT_MODE_CLEANUP_SESSIONS', 'true').lower() in ('true', '1', 'yes', 'on')
 CHAT_MODE_CLEANUP_DELAY_MINUTES = int(os.getenv('CHAT_MODE_CLEANUP_DELAY_MINUTES', '720'))  # 12 hours default
+
+# Warmup configuration
+PREWARM_STRATEGY = os.getenv('PREWARM_STRATEGY', 'adaptive').lower()
+PREWARM_REFRESH_SECONDS = int(os.getenv('PREWARM_REFRESH_SECONDS', '30'))
+PREWARM_PERSISTENT_THRESHOLD = int(os.getenv('PREWARM_PERSISTENT_THRESHOLD', '10'))
+PREWARM_IDLE_TIMEOUT = int(os.getenv('PREWARM_IDLE_TIMEOUT', '300'))
+SKIP_CLI_VERIFICATION = os.getenv('SKIP_CLI_VERIFICATION', 'false').lower() in ('true', '1', 'yes')
 
 # Set logging level based on debug/verbose mode
 log_level = logging.DEBUG if (DEBUG_MODE or VERBOSE) else logging.INFO
@@ -151,6 +159,15 @@ gemini_cli = GeminiCLI(
     timeout=int(os.getenv("MAX_TIMEOUT", "600000"))
 )
 
+# Initialize warmup manager
+warmup_manager = WarmupManager(
+    strategy=WarmupStrategy(PREWARM_STRATEGY),
+    refresh_seconds=PREWARM_REFRESH_SECONDS,
+    persistent_threshold=PREWARM_PERSISTENT_THRESHOLD,
+    idle_timeout=PREWARM_IDLE_TIMEOUT,
+    skip_verification=SKIP_CLI_VERIFICATION
+)
+
 
 async def sandbox_session_cleanup_task():
     """Background task to clean up expired sandbox sessions."""
@@ -234,14 +251,19 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(f"✅ Claude Code authentication validated: {auth_info['method']}")
     
-    # Then verify CLI
-    cli_verified = await claude_cli.verify_cli()
-    
-    if cli_verified:
-        logger.info("✅ Claude Code CLI verified successfully")
+    # Skip or perform CLI verification based on configuration
+    if not SKIP_CLI_VERIFICATION:
+        logger.info("Verifying Claude Code CLI...")
+        cli_verified = await claude_cli.verify_cli()
+        
+        if cli_verified:
+            logger.info("✅ Claude Code CLI verified successfully")
+        else:
+            logger.warning("⚠️  Claude Code CLI verification failed!")
+            logger.warning("The server will start, but requests may fail.")
     else:
-        logger.warning("⚠️  Claude Code CLI verification failed!")
-        logger.warning("The server will start, but requests may fail.")
+        logger.info("Skipping CLI verification (SKIP_CLI_VERIFICATION=true)")
+        logger.info("This speeds up startup and avoids unnecessary cold start")
     
     # Log debug information if debug mode is enabled
     if DEBUG_MODE or VERBOSE:
@@ -296,9 +318,14 @@ async def lifespan(app: FastAPI):
         sandbox_cleanup_task = asyncio.create_task(sandbox_session_cleanup_task())
         logger.info("Started sandbox session cleanup background task")
     
+    # Start warmup manager
+    await warmup_manager.start()
+    logger.info(f"Warmup manager started with strategy: {PREWARM_STRATEGY}")
+    
     yield
     
     # Cleanup on shutdown
+    await warmup_manager.stop()
     if sandbox_cleanup_task:
         sandbox_cleanup_task.cancel()
         try:
@@ -1753,6 +1780,9 @@ async def chat_completions(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ):
     """OpenAI-compatible chat completions endpoint."""
+    # Track request for warmup manager
+    await warmup_manager.on_request()
+    
     # Check FastAPI API key if configured
     await verify_api_key(request, credentials)
     
@@ -2099,6 +2129,19 @@ async def check_compatibility(request_body: ChatCompletionRequest):
 async def health_check(request: Request):
     """Health check endpoint."""
     return {"status": "healthy", "service": "claude-code-openai-wrapper"}
+
+@app.get("/v1/warmup/stats")
+@rate_limit_endpoint("warmup")
+async def get_warmup_stats(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    """Get warmup system statistics."""
+    await verify_api_key(request, credentials)
+    return {
+        "status": "ok",
+        "stats": warmup_manager.get_stats()
+    }
 
 
 @app.post("/v1/debug/request")
