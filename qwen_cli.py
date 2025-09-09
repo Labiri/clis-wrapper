@@ -401,8 +401,22 @@ class QwenCLI:
                 r"Waiting for authorization",
                 r"polling for token",
                 r"^\.",  # Dots from polling
+                r"^\.polling",  # Polling messages starting with dot
                 r"Please visit.*authorize",
-                r"Enter code:"
+                r"Enter code:",
+                # JSON auth response patterns
+                r"^\s*['\"]device_code['\"]",
+                r"^\s*['\"]user_code['\"]",
+                r"^\s*['\"]verification_uri",
+                r"^\s*['\"]expires_in['\"]",
+                r"^}$",  # Closing brace of JSON objects
+                r"^{$",  # Opening brace of JSON objects
+                # URLs and codes
+                r"https://chat\.qwen\.ai/authorize",
+                r"^[A-Z0-9]{8}-[A-Z0-9]{4}$",  # User code pattern like Y59HWLGM
+                # Success messages
+                r"Authentication successful",
+                r"Access token obtained"
             ]
             
             while True:
