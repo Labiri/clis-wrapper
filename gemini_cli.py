@@ -371,7 +371,8 @@ class GeminiCLI:
             # Sanitize environment for sandbox
             logger.info("Sanitizing environment for Gemini CLI sandbox")
             # Store and remove sensitive variables
-            sensitive_vars = ['PWD', 'OLDPWD', 'HOME', 'USER', 'LOGNAME']
+            # NOTE: HOME is preserved to allow Gemini CLI to access ~/.gemini/oauth_creds.json
+            sensitive_vars = ['PWD', 'OLDPWD', 'USER', 'LOGNAME']
             claude_vars = [k for k in os.environ.keys() if k.startswith('CLAUDE_') and 'DIR' in k]
             
             for var in sensitive_vars + claude_vars:
